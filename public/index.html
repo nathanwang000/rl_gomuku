@@ -31,10 +31,6 @@ canvas { cursor: crosshair; border-radius: 4px; box-shadow: 0 4px 20px rgba(0,0,
 <canvas id="board" width="620" height="620"></canvas>
 
 <script>
-// ============================================================
-// Gomoku Client — all game state lives here, AI is a stateless endpoint
-// ============================================================
-
 const SIZE = 15;
 const WIN_LENGTH = 5;
 const PADDING = 20;
@@ -43,14 +39,19 @@ const ctx = canvas.getContext('2d');
 const cellSize = (canvas.width - 2 * PADDING) / (SIZE - 1);
 
 // --- Game State (fully client-side) ---
-let game = null;  // { board: [][], currentPlayer: 1|2, winner: null|0|1|2, lastMove: null|[r,c] }
-let policies = { 1: 'human', 2: 'human' };  // per-player policy names
+let game = null;
 let thinking = false;
+let aiLoopRunning = false;
 
-// --- API base URL: auto-detect (works locally and on Vercel/Netlify) ---
-const API_BASE = '';  // relative — works when served from same origin
+const API_BASE = '';
 
-// --- Game Logic (client-side, mirrors game.py) ---
+// --- Live policy reading (always reads current dropdown value) ---
+function getPolicy(player) {
+  if (player === 1) return document.getElementById('black').value;
+  return document.getElementById('white').value;
+}
+
+// --- Game Logic ---
 
 function createBoard() {
   return Array.from({ length: SIZE }, () => Array(SIZE).fill(0));
@@ -94,14 +95,14 @@ function makeMove(row, col) {
   if (checkWin(game.board, row, col)) {
     game.winner = game.currentPlayer;
   } else if (getValidMoves(game.board).length === 0) {
-    game.winner = 0;  // draw
+    game.winner = 0;
   } else {
     game.currentPlayer = 3 - game.currentPlayer;
   }
   return true;
 }
 
-// --- AI Communication (stateless endpoint) ---
+// --- AI Communication ---
 
 async function requestAIMove(policyName) {
   const res = await fetch(`${API_BASE}/api/move`, {
@@ -117,13 +118,15 @@ async function requestAIMove(policyName) {
     const err = await res.json().catch(() => ({ error: 'Network error' }));
     throw new Error(err.error || 'AI request failed');
   }
-  return res.json();  // { row, col }
+  return res.json();
 }
 
 async function aiTurnLoop() {
-  // Keep making AI moves while current player is an AI
+  if (aiLoopRunning) return;  // prevent multiple concurrent loops
+  aiLoopRunning = true;
+
   while (game && game.winner === null) {
-    const policy = policies[game.currentPlayer];
+    const policy = getPolicy(game.currentPlayer);  // re-read dropdown each iteration
     if (policy === 'human') break;
 
     thinking = true;
@@ -131,6 +134,12 @@ async function aiTurnLoop() {
 
     try {
       const { row, col } = await requestAIMove(policy);
+      // Re-check policy after await — user might have switched mid-request
+      if (getPolicy(game.currentPlayer) === 'human') {
+        thinking = false;
+        render();
+        break;
+      }
       if (!makeMove(row, col)) {
         console.error('AI returned invalid move', row, col);
         break;
@@ -144,13 +153,31 @@ async function aiTurnLoop() {
     render();
 
     // Small delay between AI-vs-AI moves for visibility
-    if (policies[game.currentPlayer] !== 'human') {
+    if (game.winner === null && getPolicy(game.currentPlayer) !== 'human') {
       await new Promise(r => setTimeout(r, 200));
     }
   }
+
   thinking = false;
+  aiLoopRunning = false;
   render();
 }
+
+// --- Dropdown change listeners (mid-game toggle) ---
+document.getElementById('black').addEventListener('change', () => {
+  if (!game || game.winner !== null) return;
+  // If it's now this player's turn and they switched to AI, kick off AI loop
+  if (game.currentPlayer === 1 && getPolicy(1) !== 'human') {
+    aiTurnLoop();
+  }
+});
+
+document.getElementById('white').addEventListener('change', () => {
+  if (!game || game.winner !== null) return;
+  if (game.currentPlayer === 2 && getPolicy(2) !== 'human') {
+    aiTurnLoop();
+  }
+});
 
 // --- Drawing ---
 
@@ -164,7 +191,6 @@ function drawBoard() {
     ctx.beginPath(); ctx.moveTo(p, PADDING); ctx.lineTo(p, canvas.height - PADDING); ctx.stroke();
     ctx.beginPath(); ctx.moveTo(PADDING, p); ctx.lineTo(canvas.width - PADDING, p); ctx.stroke();
   }
-  // Star points
   const stars = [3, 7, 11];
   ctx.fillStyle = '#333';
   for (const r of stars) for (const c of stars) {
@@ -188,7 +214,6 @@ function drawStones() {
     ctx.lineWidth = 1;
     ctx.stroke();
   }
-  // Highlight last move
   if (game.lastMove) {
     const [r, c] = game.lastMove;
     const x = PADDING + c * cellSize, y = PADDING + r * cellSize;
@@ -214,8 +239,6 @@ function render() { drawBoard(); drawStones(); updateStatus(); }
 // --- User Interaction ---
 
 function newGame() {
-  policies[1] = document.getElementById('black').value;
-  policies[2] = document.getElementById('white').value;
   game = {
     board: createBoard(),
     currentPlayer: 1,
@@ -223,16 +246,17 @@ function newGame() {
     lastMove: null,
   };
   thinking = false;
+  aiLoopRunning = false;
   render();
   // If first player is AI, start the AI loop
-  if (policies[1] !== 'human') {
+  if (getPolicy(1) !== 'human') {
     aiTurnLoop();
   }
 }
 
 canvas.addEventListener('click', async (e) => {
   if (!game || game.winner !== null || thinking) return;
-  if (policies[game.currentPlayer] !== 'human') return;
+  if (getPolicy(game.currentPlayer) !== 'human') return;
 
   const rect = canvas.getBoundingClientRect();
   const x = e.clientX - rect.left, y = e.clientY - rect.top;
@@ -243,8 +267,8 @@ canvas.addEventListener('click', async (e) => {
   if (!makeMove(row, col)) return;
   render();
 
-  // After human move, let AI respond
-  if (game.winner === null && policies[game.currentPlayer] !== 'human') {
+  // After human move, let AI respond if next player is AI
+  if (game.winner === null && getPolicy(game.currentPlayer) !== 'human') {
     aiTurnLoop();
   }
 });
