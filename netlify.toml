@@ -1,0 +1,12 @@
+[build]
+  publish = "public"
+  functions = "netlify/functions"
+
+[dev]
+  publish = "public"
+  port = 8888
+
+[[redirects]]
+  from = "/api/move"
+  to = "/.netlify/functions/move"
+  status = 200

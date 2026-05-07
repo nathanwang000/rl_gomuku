@@ -1,10 +1,9 @@
 [project]
 name = "gomoku"
-version = "0.1.0"
-description = "A clean, extensible Gomoku (Five in a Row) game designed as a playground for RL experiments."
+version = "0.2.0"
+description = "Gomoku (Five in a Row) — serverless-ready with client-side game state and stateless AI endpoint."
 requires-python = ">=3.10"
 dependencies = [
-    "flask>=3.0",
     "numpy>=1.24",
 ]
 

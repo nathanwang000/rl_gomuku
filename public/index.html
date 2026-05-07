@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Gomoku</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: system-ui, sans-serif; background: #1a1a2e; color: #eee;
+       display: flex; flex-direction: column; align-items: center; min-height: 100vh; padding: 20px; }
+h1 { margin-bottom: 10px; color: #e94560; }
+#controls { margin-bottom: 15px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; justify-content: center; }
+select, button { padding: 6px 12px; border-radius: 4px; border: none; font-size: 14px; cursor: pointer; }
+button { background: #e94560; color: #fff; }
+button:hover { background: #ff6b6b; }
+select { background: #16213e; color: #eee; border: 1px solid #444; }
+#status { margin-bottom: 10px; font-size: 16px; min-height: 24px; }
+canvas { cursor: crosshair; border-radius: 4px; box-shadow: 0 4px 20px rgba(0,0,0,0.5); }
+.thinking { animation: pulse 1s infinite; }
+@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
+</style>
+</head>
+<body>
+<h1>Gomoku</h1>
+<div id="controls">
+  <label>Black: <select id="black"><option value="human">Human</option><option value="random">Random AI</option></select></label>
+  <label>White: <select id="white"><option value="human">Human</option><option value="random">Random AI</option></select></label>
+  <button onclick="newGame()">New Game</button>
+</div>
+<div id="status">Click "New Game" to start</div>
+<canvas id="board" width="620" height="620"></canvas>
+
+<script>
+// ============================================================
+// Gomoku Client — all game state lives here, AI is a stateless endpoint
+// ============================================================
+
+const SIZE = 15;
+const WIN_LENGTH = 5;
+const PADDING = 20;
+const canvas = document.getElementById('board');
+const ctx = canvas.getContext('2d');
+const cellSize = (canvas.width - 2 * PADDING) / (SIZE - 1);
+
+// --- Game State (fully client-side) ---
+let game = null;  // { board: [][], currentPlayer: 1|2, winner: null|0|1|2, lastMove: null|[r,c] }
+let policies = { 1: 'human', 2: 'human' };  // per-player policy names
+let thinking = false;
+
+// --- API base URL: auto-detect (works locally and on Vercel/Netlify) ---
+const API_BASE = '';  // relative — works when served from same origin
+
+// --- Game Logic (client-side, mirrors game.py) ---
+
+function createBoard() {
+  return Array.from({ length: SIZE }, () => Array(SIZE).fill(0));
+}
+
+function getValidMoves(board) {
+  const moves = [];
+  for (let r = 0; r < SIZE; r++)
+    for (let c = 0; c < SIZE; c++)
+      if (board[r][c] === 0) moves.push([r, c]);
+  return moves;
+}
+
+function checkWin(board, row, col) {
+  const player = board[row][col];
+  if (player === 0) return false;
+  const directions = [[0,1],[1,0],[1,1],[1,-1]];
+  for (const [dr, dc] of directions) {
+    let count = 1;
+    for (const sign of [1, -1]) {
+      let r = row + dr * sign, c = col + dc * sign;
+      while (r >= 0 && r < SIZE && c >= 0 && c < SIZE && board[r][c] === player) {
+        count++;
+        r += dr * sign;
+        c += dc * sign;
+      }
+    }
+    if (count >= WIN_LENGTH) return true;
+  }
+  return false;
+}
+
+function makeMove(row, col) {
+  if (game.winner !== null) return false;
+  if (row < 0 || row >= SIZE || col < 0 || col >= SIZE) return false;
+  if (game.board[row][col] !== 0) return false;
+
+  game.board[row][col] = game.currentPlayer;
+  game.lastMove = [row, col];
+
+  if (checkWin(game.board, row, col)) {
+    game.winner = game.currentPlayer;
+  } else if (getValidMoves(game.board).length === 0) {
+    game.winner = 0;  // draw
+  } else {
+    game.currentPlayer = 3 - game.currentPlayer;
+  }
+  return true;
+}
+
+// --- AI Communication (stateless endpoint) ---
+
+async function requestAIMove(policyName) {
+  const res = await fetch(`${API_BASE}/api/move`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      board: game.board,
+      current_player: game.currentPlayer,
+      policy: policyName,
+    }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: 'Network error' }));
+    throw new Error(err.error || 'AI request failed');
+  }
+  return res.json();  // { row, col }
+}
+
+async function aiTurnLoop() {
+  // Keep making AI moves while current player is an AI
+  while (game && game.winner === null) {
+    const policy = policies[game.currentPlayer];
+    if (policy === 'human') break;
+
+    thinking = true;
+    render();
+
+    try {
+      const { row, col } = await requestAIMove(policy);
+      if (!makeMove(row, col)) {
+        console.error('AI returned invalid move', row, col);
+        break;
+      }
+    } catch (e) {
+      console.error('AI error:', e.message);
+      break;
+    }
+
+    thinking = false;
+    render();
+
+    // Small delay between AI-vs-AI moves for visibility
+    if (policies[game.currentPlayer] !== 'human') {
+      await new Promise(r => setTimeout(r, 200));
+    }
+  }
+  thinking = false;
+  render();
+}
+
+// --- Drawing ---
+
+function drawBoard() {
+  ctx.fillStyle = '#c8a45c';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.strokeStyle = '#333';
+  ctx.lineWidth = 0.8;
+  for (let i = 0; i < SIZE; i++) {
+    const p = PADDING + i * cellSize;
+    ctx.beginPath(); ctx.moveTo(p, PADDING); ctx.lineTo(p, canvas.height - PADDING); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(PADDING, p); ctx.lineTo(canvas.width - PADDING, p); ctx.stroke();
+  }
+  // Star points
+  const stars = [3, 7, 11];
+  ctx.fillStyle = '#333';
+  for (const r of stars) for (const c of stars) {
+    ctx.beginPath();
+    ctx.arc(PADDING + c * cellSize, PADDING + r * cellSize, 3.5, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+function drawStones() {
+  if (!game) return;
+  for (let r = 0; r < SIZE; r++) for (let c = 0; c < SIZE; c++) {
+    const v = game.board[r][c];
+    if (v === 0) continue;
+    const x = PADDING + c * cellSize, y = PADDING + r * cellSize;
+    ctx.beginPath();
+    ctx.arc(x, y, cellSize * 0.43, 0, Math.PI * 2);
+    ctx.fillStyle = v === 1 ? '#111' : '#f5f5f5';
+    ctx.fill();
+    ctx.strokeStyle = v === 1 ? '#000' : '#bbb';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+  }
+  // Highlight last move
+  if (game.lastMove) {
+    const [r, c] = game.lastMove;
+    const x = PADDING + c * cellSize, y = PADDING + r * cellSize;
+    ctx.beginPath();
+    ctx.arc(x, y, 5, 0, Math.PI * 2);
+    ctx.fillStyle = '#e94560';
+    ctx.fill();
+  }
+}
+
+function updateStatus() {
+  const el = document.getElementById('status');
+  if (!game) { el.textContent = 'Click "New Game" to start'; el.classList.remove('thinking'); return; }
+  if (game.winner === 1) { el.textContent = '⚫ Black wins!'; el.classList.remove('thinking'); }
+  else if (game.winner === 2) { el.textContent = '⚪ White wins!'; el.classList.remove('thinking'); }
+  else if (game.winner === 0) { el.textContent = 'Draw!'; el.classList.remove('thinking'); }
+  else if (thinking) { el.textContent = (game.currentPlayer === 1 ? '⚫ Black' : '⚪ White') + ' is thinking...'; el.classList.add('thinking'); }
+  else { el.textContent = (game.currentPlayer === 1 ? '⚫ Black' : '⚪ White') + "'s turn"; el.classList.remove('thinking'); }
+}
+
+function render() { drawBoard(); drawStones(); updateStatus(); }
+
+// --- User Interaction ---
+
+function newGame() {
+  policies[1] = document.getElementById('black').value;
+  policies[2] = document.getElementById('white').value;
+  game = {
+    board: createBoard(),
+    currentPlayer: 1,
+    winner: null,
+    lastMove: null,
+  };
+  thinking = false;
+  render();
+  // If first player is AI, start the AI loop
+  if (policies[1] !== 'human') {
+    aiTurnLoop();
+  }
+}
+
+canvas.addEventListener('click', async (e) => {
+  if (!game || game.winner !== null || thinking) return;
+  if (policies[game.currentPlayer] !== 'human') return;
+
+  const rect = canvas.getBoundingClientRect();
+  const x = e.clientX - rect.left, y = e.clientY - rect.top;
+  const col = Math.round((x - PADDING) / cellSize);
+  const row = Math.round((y - PADDING) / cellSize);
+  if (row < 0 || row >= SIZE || col < 0 || col >= SIZE) return;
+
+  if (!makeMove(row, col)) return;
+  render();
+
+  // After human move, let AI respond
+  if (game.winner === null && policies[game.currentPlayer] !== 'human') {
+    aiTurnLoop();
+  }
+});
+
+render();
+</script>
+</body>
+</html>
