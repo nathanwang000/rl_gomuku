@@ -5,8 +5,11 @@ A clean, extensible Gomoku (Five in a Row) game designed as a playground for RL 
 ## Quick Start
 
 ```bash
-pip install -r requirements.txt
-python app.py
+# Install uv if you don't have it
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Run the server (uv handles virtualenv + deps automatically)
+uv run python app.py
 ```
 
 Then open http://localhost:5000 in your browser.
@@ -26,6 +29,12 @@ static/      — Single-page frontend (vanilla JS + Canvas)
 2. Implement `select_move(state: GameState) -> (row, col)`
 3. Register it in the `POLICIES` dict
 4. It will automatically appear as a player option (add to frontend dropdown)
+
+## Adding Dependencies
+
+```bash
+uv add <package-name>
+```
 
 ## Player Options
 
