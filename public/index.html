@@ -26,8 +26,8 @@ canvas { cursor: crosshair; border-radius: 4px; box-shadow: 0 4px 20px rgba(0,0,
 <body>
 <h1>Gomoku</h1>
 <div id="controls">
-  <label>Black: <select id="black"><option value="human">Human</option><option value="random">Random AI</option></select></label>
-  <label>White: <select id="white"><option value="human">Human</option><option value="random">Random AI</option></select></label>
+  <label>Black: <select id="black"><option value="human">Human</option><option value="smart" selected>Smart AI</option><option value="random">Random AI</option></select></label>
+  <label>White: <select id="white"><option value="human">Human</option><option value="smart" selected>Smart AI</option><option value="random">Random AI</option></select></label>
   <button onclick="newGame()">New Game</button>
   <button id="music-btn" onclick="toggleMusic()" title="Toggle Music">🔇</button>
 </div>

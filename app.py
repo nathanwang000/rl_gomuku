@@ -47,7 +47,7 @@ class GomokuHandler(SimpleHTTPRequestHandler):
 
         board = body.get("board")
         current_player = body.get("current_player")
-        policy_name = body.get("policy", "random")
+        policy_name = body.get("policy", "smart")
 
         if board is None or current_player is None:
             self._respond(400, {"error": "Missing 'board' or 'current_player'"})
