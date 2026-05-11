@@ -11,8 +11,41 @@ import sys
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from game import GameState
+from game import GameState, BOARD_SIZE
 from policy import get_policy
+
+# Cache loaded neural policies so we don't reload from disk on every request
+_neural_policy_cache: dict = {}
+
+
+def _get_neural_policy(checkpoint_name: str):
+    """Load (or return cached) NeuralPolicy for a given checkpoint filename."""
+    if checkpoint_name in _neural_policy_cache:
+        return _neural_policy_cache[checkpoint_name]
+
+    import torch
+    from rl.network import PolicyValueNet
+    from rl.selfplay import NeuralPolicy
+
+    checkpoint_path = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "checkpoints", checkpoint_name
+    )
+    net = PolicyValueNet(board_size=BOARD_SIZE)
+    # cpu mapping as server may not have GPU
+    net.load_state_dict(torch.load(checkpoint_path, map_location="cpu"))
+    net.eval()
+    policy = NeuralPolicy(net, temperature=0.0, device="cpu")
+
+    _neural_policy_cache[checkpoint_name] = policy
+    return policy
+
+
+def _list_checkpoints() -> list:
+    """Return sorted list of .pt filenames in the checkpoints/ directory."""
+    ckpt_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "checkpoints")
+    if not os.path.isdir(ckpt_dir):
+        return []
+    return sorted(f for f in os.listdir(ckpt_dir) if f.endswith(".pt"))
 
 
 class GomokuHandler(SimpleHTTPRequestHandler):
@@ -21,6 +54,12 @@ class GomokuHandler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         # Serve files from public/ directory
         super().__init__(*args, directory=os.path.join(os.path.dirname(os.path.abspath(__file__)), "public"), **kwargs)
+
+    def do_GET(self):
+        if self.path == "/api/checkpoints":
+            self._respond(200, {"checkpoints": _list_checkpoints()})
+        else:
+            super().do_GET()
 
     def do_POST(self):
         if self.path == "/api/move":
@@ -61,9 +100,13 @@ class GomokuHandler(SimpleHTTPRequestHandler):
         )
 
         try:
-            policy = get_policy(policy_name)
-        except KeyError:
-            self._respond(400, {"error": f"Unknown policy: {policy_name}"})
+            if policy_name.startswith("checkpoint:"):
+                checkpoint_name = policy_name[len("checkpoint:"):]
+                policy = _get_neural_policy(checkpoint_name)
+            else:
+                policy = get_policy(policy_name)
+        except (KeyError, FileNotFoundError) as e:
+            self._respond(400, {"error": f"Unknown or missing policy: {policy_name} ({e})"})
             return
 
         row, col = policy.select_move(state)

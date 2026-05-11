@@ -457,6 +457,40 @@ canvas.addEventListener('click', async (e) => {
 });
 
 render();
+
+// --- Load checkpoints from server and populate dropdowns ---
+
+async function loadCheckpoints() {
+  try {
+    const res = await fetch('/api/checkpoints');
+    if (!res.ok) return;
+    const { checkpoints } = await res.json();
+    if (!checkpoints || checkpoints.length === 0) return;
+
+    const selects = [document.getElementById('black'), document.getElementById('white')];
+    for (const sel of selects) {
+      // Add a visual separator
+      const sep = document.createElement('option');
+      sep.disabled = true;
+      sep.textContent = '── Neural (trained) ──';
+      sel.appendChild(sep);
+
+      for (const name of checkpoints) {
+        // name like "iter_0012.pt" → label "Neural iter 12"
+        const iter = name.match(/iter_(\d+)/);
+        const label = iter ? `Neural iter ${parseInt(iter[1], 10)}` : name;
+        const opt = document.createElement('option');
+        opt.value = `checkpoint:${name}`;
+        opt.textContent = label;
+        sel.appendChild(opt);
+      }
+    }
+  } catch (e) {
+    // Server may not support the endpoint (e.g. serverless) — silently skip
+  }
+}
+
+loadCheckpoints();
 </script>
 </body>
 </html>
