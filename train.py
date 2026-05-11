@@ -92,14 +92,20 @@ def main():
 
     if args.resume:
         trainer.load(args.resume)
-        print(f"Resumed from {args.resume}")
+        # Infer starting iteration from filename (e.g. "checkpoints/iter_0012.pt" → 12)
+        match = __import__("re").search(r"iter_(\d+)", args.resume)
+        start_iter = int(match.group(1)) if match else 0
+        print(
+            f"Resumed from {args.resume} (continuing from iter {start_iter})")
+    else:
+        start_iter = 0
 
     buffer = ReplayBuffer(capacity=BUFFER_CAPACITY)
 
     # The "best" policy starts as a copy of the current network
     best_net = copy.deepcopy(net)
 
-    for iteration in range(1, ITERATIONS + 1):
+    for iteration in range(start_iter + 1, start_iter + ITERATIONS + 1):
         t0 = time.time()
 
         # ── 1. Collect ──────────────────────────────────────────────────────
@@ -156,7 +162,7 @@ def main():
         trainer.save(str(ckpt))
 
         elapsed = time.time() - t0
-        print(f"[iter {iteration:3d}/{ITERATIONS}] "
+        print(f"[iter {iteration:4d}] "
               f"p_loss={avg_p:.4f}  v_loss={avg_v:.4f}  "
               f"win_rate={win_rate:.2f}  "
               f"buf={len(buffer)}  avg_game={avg_length:.0f}  "
