@@ -2,11 +2,15 @@
 
 An Episode records every (state_tensor, move_index) pair from one game.
 After the game ends, value targets are back-filled based on the outcome:
-  winner's turns  → +1
-  loser's turns   → -1
+  winner's turns  → +γ^(T-1-t)   (1.0 for the final move, decaying backwards)
+  loser's turns   → -γ^(T-1-t)
   draw            →  0
 
-ReplayBuffer keeps the last `capacity` episodes and serves random mini-batches.
+Discounting with γ<1 rewards winning fast: the winning move always gets ±1
+and earlier moves get progressively smaller targets, naturally down-weighting
+moves where causal attribution is weakest.
+
+ReplayBuffer keeps the last `capacity` transitions and serves random mini-batches.
 """
 
 import random
@@ -49,18 +53,20 @@ class Episode:
                 player=player,
             ))
 
-    def finalise(self, winner: Optional[int]) -> List[Transition]:
-        """Back-fill value targets and return the completed transition list.
+    def finalise(self, winner: Optional[int], gamma: float = 1.0) -> List[Transition]:
+        """Back-fill discounted value targets and return the completed transition list.
 
         winner: 1 or 2 for the winning player, 0 for draw, None for abandoned.
+        gamma:  discount factor. 1.0 = flat outcome; <1.0 = rewards winning fast.
+                The last move always gets ±1; earlier moves get γ^(T-1-t).
         """
-        for t in self._transitions:
+        T = len(self._transitions)
+        for i, t in enumerate(self._transitions):
             if winner == 0 or winner is None:
                 t.value_target = 0.0
-            elif winner == t.player:
-                t.value_target = 1.0
             else:
-                t.value_target = -1.0
+                sign = 1.0 if winner == t.player else -1.0
+                t.value_target = sign * (gamma ** (T - 1 - i))
         return self._transitions
 
 

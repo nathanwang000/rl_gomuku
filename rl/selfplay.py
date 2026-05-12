@@ -77,6 +77,7 @@ def run_episode(
     policy1: Policy,
     policy2: Policy,
     record: bool = True,
+    gamma: float = 1.0,
 ) -> Tuple[Optional[int], List[Transition]]:
     """Play one complete game and return (winner, transitions).
 
@@ -110,5 +111,5 @@ def run_episode(
 
         state.make_move(row, col)
 
-    transitions = episode.finalise(state.winner) if record else []
+    transitions = episode.finalise(state.winner, gamma=gamma) if record else []
     return state.winner, transitions

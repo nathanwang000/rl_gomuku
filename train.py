@@ -40,6 +40,7 @@ NUM_BLOCKS = 4  # ResNet depth
 CHANNELS = 64  # ResNet width
 TEMPERATURE = 1.0  # exploration temperature during self-play
 EVAL_TEMPERATURE = 0.0  # deterministic during evaluation
+GAMMA = 0.95  # discount factor: rewards winning fast; 1.0 = flat outcome
 
 CHECKPOINT_DIR = Path("checkpoints")
 
@@ -117,7 +118,8 @@ def main():
         for _ in range(GAMES_PER_ITER):
             _, transitions = run_episode(current_policy,
                                          current_policy,
-                                         record=True)
+                                         record=True,
+                                         gamma=GAMMA)
             buffer.add(transitions)
             game_lengths.append(len(transitions))
 
