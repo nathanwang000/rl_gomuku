@@ -132,10 +132,8 @@ def main():
 
         total_p_loss = total_v_loss = 0.0
         for _ in range(TRAIN_STEPS_PER_ITER):
-            states, policy_targets, value_targets, _ = buffer.sample(
-                BATCH_SIZE)
-            p_loss, v_loss = trainer.train_step(states, policy_targets,
-                                                value_targets)
+            states, _, value_targets, move_indices = buffer.sample(BATCH_SIZE)
+            p_loss, v_loss = trainer.train_step(states, move_indices, value_targets)
             total_p_loss += p_loss
             total_v_loss += v_loss
 

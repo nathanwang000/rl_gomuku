@@ -1,9 +1,8 @@
 """Policy-value network.
 
-Input:  (batch, 3, H, W) float tensor
+Input:  (batch, 2, H, W) float tensor
           channel 0 — current player's stones
           channel 1 — opponent's stones
-          channel 2 — all-ones (constant "side to move" plane, keeps bias easy)
 
 Outputs:
   policy_logits — (batch, H*W) raw logits over every cell
@@ -55,9 +54,9 @@ class PolicyValueNet(nn.Module):
         self.board_size = board_size
         H = W = board_size
 
-        # Stem: project 3 input channels to `channels`
+        # Stem: project 2 input channels to `channels`
         self.stem = nn.Sequential(
-            nn.Conv2d(3, channels, kernel_size=3, padding=1, bias=False),
+            nn.Conv2d(2, channels, kernel_size=3, padding=1, bias=False),
             nn.BatchNorm2d(channels),
             nn.ReLU(),
         )
@@ -99,12 +98,10 @@ class PolicyValueNet(nn.Module):
     # ------------------------------------------------------------------
 
     def encode_state(self, state) -> torch.Tensor:
-        """Turn a GameState into a (1, 3, H, W) float tensor."""
+        """Turn a GameState into a (1, 2, H, W) float tensor."""
         import numpy as np
         board = state.board  # (H, W) int8
         me = (board == state.current_player).astype(np.float32)
         opp = (board == 3 - state.current_player).astype(np.float32)
-        turn = np.ones_like(me)
-        tensor = torch.tensor(np.stack([me, opp,
-                                        turn])).unsqueeze(0)  # (1,3,H,W)
+        tensor = torch.tensor(np.stack([me, opp])).unsqueeze(0)  # (1,2,H,W)
         return tensor

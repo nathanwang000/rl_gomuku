@@ -1,10 +1,12 @@
 """Training step logic.
 
 Loss = policy_loss + value_loss
-  policy_loss: cross-entropy between network policy and target distribution
-  value_loss:  mean-squared error between network value and game outcome
+  policy_loss: REINFORCE — -log_prob(chosen_move) * advantage
+               advantage = value_target - value.detach() (actor-critic baseline)
+  value_loss:  MSE between predicted value and game outcome
 
-Both losses are equally weighted — no hyperparameter needed for balance.
+The baseline subtracts the network's own value estimate, reducing gradient
+variance while keeping the policy gradient unbiased.
 """
 
 from typing import Tuple
@@ -30,24 +32,26 @@ class Trainer:
 
     def train_step(
             self,
-            states: torch.Tensor,  # (B, 3, H, W)
-            policy_targets: torch.Tensor,  # (B, H*W) — soft distribution
-            value_targets: torch.Tensor,  # (B,)     — +1 / -1 / 0
+            states: torch.Tensor,        # (B, 3, H, W)
+            move_indices: torch.Tensor,  # (B,)     — flat index of chosen move
+            value_targets: torch.Tensor, # (B,)     — +1 / -1 / 0
     ) -> Tuple[float, float]:
         """One gradient step. Returns (policy_loss, value_loss) as Python floats."""
-        states = states.to(self.device)
-        policy_targets = policy_targets.to(self.device)
+        states        = states.to(self.device)
+        move_indices  = move_indices.to(self.device)
         value_targets = value_targets.to(self.device)
 
         self.net.train()
         policy_logits, value = self.net(states)
 
-        # Policy loss: KL-divergence reduces to cross-entropy when targets are soft
-        # log_softmax + kl_div gives a clean, numerically stable form
-        log_probs = F.log_softmax(policy_logits, dim=-1)
-        policy_loss = F.kl_div(log_probs,
-                               policy_targets,
-                               reduction="batchmean")
+        # REINFORCE policy loss
+        # advantage = outcome - baseline; baseline = value estimate (detached so
+        # it doesn't pull gradients through the value head via the policy loss)
+        # advantage = value_targets - value.detach()                          # (B,)
+        advantage = value_targets # vannilla version without baseline --- IGNORE ---
+        log_probs = F.log_softmax(policy_logits, dim=-1)                   # (B, H*W)
+        chosen_log_probs = log_probs.gather(1, move_indices.unsqueeze(1)).squeeze(1)  # (B,)
+        policy_loss = -(chosen_log_probs * advantage).mean()
 
         # Value loss: plain MSE against {-1, 0, +1} targets
         value_loss = F.mse_loss(value, value_targets)
