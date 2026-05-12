@@ -39,8 +39,8 @@ NUM_BLOCKS = 4  # ResNet depth
 CHANNELS = 64  # ResNet width
 TEMPERATURE = 1.0  # exploration temperature during self-play
 EVAL_TEMPERATURE = 0.0  # deterministic during evaluation
-GAMMA = 0.95   # discount factor: rewards winning fast; 1.0 = flat outcome
-LAMBDA = 0.9   # TD(λ) mixing: 1.0 = pure MC, 0.0 = pure TD(0)
+GAMMA = 0.95  # discount factor: rewards winning fast; 1.0 = flat outcome
+LAMBDA = 0.9  # TD(λ) mixing: 1.0 = pure MC, 0.0 = pure TD(0)
 
 CHECKPOINT_DIR = Path("checkpoints")
 
@@ -136,11 +136,17 @@ def main():
             continue
 
         total_p_loss = total_v_loss = 0.0
-        for _ in range(TRAIN_STEPS_PER_ITER):
+        first_p, first_v = None, None
+        last_p, last_v = None, None
+        for step in range(TRAIN_STEPS_PER_ITER):
             states, _, value_targets, move_indices = buffer.sample(BATCH_SIZE)
-            p_loss, v_loss = trainer.train_step(states, move_indices, value_targets)
+            p_loss, v_loss = trainer.train_step(states, move_indices,
+                                                value_targets)
             total_p_loss += p_loss
             total_v_loss += v_loss
+            if step == 0:
+                first_p, first_v = p_loss, v_loss
+            last_p, last_v = p_loss, v_loss
 
         avg_p = total_p_loss / TRAIN_STEPS_PER_ITER
         avg_v = total_v_loss / TRAIN_STEPS_PER_ITER
@@ -166,7 +172,8 @@ def main():
 
         elapsed = time.time() - t0
         print(f"[iter {iteration:4d}] "
-              f"p_loss={avg_p:.2f}  v_loss={avg_v:.4f}  "
+              f"p_loss={avg_p:.2f}(↓{first_p:.2f}→{last_p:.2f})  "
+              f"v_loss={avg_v:.4f}(↓{first_v:.4f}→{last_v:.4f})  "
               f"win_rate={win_rate:.2f}  "
               f"buf={len(buffer)}  avg_game={avg_length:.0f}  "
               f"t={elapsed:.1f}s  {updated}")
