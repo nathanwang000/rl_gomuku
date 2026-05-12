@@ -39,7 +39,7 @@ class NeuralPolicy(Policy):
         self.device = device
 
     def select_move(self, state: GameState) -> Tuple[int, int]:
-        move_index, _ = self._select_with_policy(state)
+        move_index, _, __ = self._select_with_policy(state)
         H = state.board.shape[0]
         return divmod(move_index, H)
 
@@ -48,12 +48,14 @@ class NeuralPolicy(Policy):
     # ------------------------------------------------------------------
 
     @torch.no_grad()
-    def _select_with_policy(self,
-                            state: GameState) -> Tuple[int, torch.Tensor]:
-        """Returns (move_index, policy_distribution) for recording."""
-        x = self.net.encode_state(state).to(self.device)  # (1, 3, H, W)
-        logits, _ = self.net(x)  # (1, H*W)
-        logits = logits.squeeze(0)  # (H*W,)
+    def _select_with_policy(
+        self, state: GameState
+    ) -> Tuple[int, torch.Tensor, float]:
+        """Returns (move_index, policy_distribution, value_pred) for recording."""
+        x = self.net.encode_state(state).to(self.device)  # (1, 2, H, W)
+        logits, value = self.net(x)                        # (1, H*W), (1,)
+        logits = logits.squeeze(0)                         # (H*W,)
+        value_pred = value.item()
 
         # Mask illegal moves
         H, W = state.board.shape
@@ -70,7 +72,7 @@ class NeuralPolicy(Policy):
             dist = F.softmax(logits / self.temperature, dim=0)
             move_index = int(torch.multinomial(dist, 1).item())
 
-        return move_index, dist
+        return move_index, dist, value_pred
 
 
 def run_episode(
@@ -78,6 +80,7 @@ def run_episode(
     policy2: Policy,
     record: bool = True,
     gamma: float = 1.0,
+    lam: float = 1.0,
 ) -> Tuple[Optional[int], List[Transition]]:
     """Play one complete game and return (winner, transitions).
 
@@ -96,14 +99,15 @@ def run_episode(
         policy = policies[player]
 
         if record and isinstance(policy, NeuralPolicy):
-            move_index, dist = policy._select_with_policy(state)
-            state_tensor = policy.net.encode_state(state).squeeze(0)  # (3,H,W)
+            move_index, dist, value_pred = policy._select_with_policy(state)
+            state_tensor = policy.net.encode_state(state).squeeze(0)  # (2,H,W)
             H = state.board.shape[0]
             row, col = divmod(move_index, H)
             episode.record(
                 state=state_tensor,
                 move_index=move_index,
                 policy_target=dist.cpu(),
+                value_pred=value_pred,
                 player=player,
             )
         else:
@@ -111,5 +115,5 @@ def run_episode(
 
         state.make_move(row, col)
 
-    transitions = episode.finalise(state.winner, gamma=gamma) if record else []
+    transitions = episode.finalise(state.winner, gamma=gamma, lam=lam) if record else []
     return state.winner, transitions

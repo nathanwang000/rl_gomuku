@@ -30,9 +30,8 @@ ITERATIONS = 50  # outer training iterations
 GAMES_PER_ITER = 20  # self-play games collected each iteration
 TRAIN_STEPS_PER_ITER = 50  # gradient steps taken each iteration
 BATCH_SIZE = 256
-BUFFER_CAPACITY = 50_000
 
-EVAL_GAMES = 20  # games played to compare new vs old policy
+EVAL_GAMES = 2  # games played to compare new vs old policy
 WIN_RATE_THRESHOLD = 0.55  # replace old policy only if new wins > this fraction
 
 LR = 1e-3
@@ -40,7 +39,8 @@ NUM_BLOCKS = 4  # ResNet depth
 CHANNELS = 64  # ResNet width
 TEMPERATURE = 1.0  # exploration temperature during self-play
 EVAL_TEMPERATURE = 0.0  # deterministic during evaluation
-GAMMA = 0.95  # discount factor: rewards winning fast; 1.0 = flat outcome
+GAMMA = 0.95   # discount factor: rewards winning fast; 1.0 = flat outcome
+LAMBDA = 0.9   # TD(λ) mixing: 1.0 = pure MC, 0.0 = pure TD(0)
 
 CHECKPOINT_DIR = Path("checkpoints")
 
@@ -101,7 +101,7 @@ def main():
     else:
         start_iter = 0
 
-    buffer = ReplayBuffer(capacity=BUFFER_CAPACITY)
+    buffer = ReplayBuffer()
 
     # The "best" policy starts as a copy of the current network
     best_net = copy.deepcopy(net)
@@ -110,6 +110,8 @@ def main():
         t0 = time.time()
 
         # ── 1. Collect ──────────────────────────────────────────────────────
+        # Clear buffer so we only train on data from the current policy (on-policy)
+        buffer.clear()
         current_policy = NeuralPolicy(net,
                                       temperature=TEMPERATURE,
                                       device=device)
@@ -119,7 +121,8 @@ def main():
             _, transitions = run_episode(current_policy,
                                          current_policy,
                                          record=True,
-                                         gamma=GAMMA)
+                                         gamma=GAMMA,
+                                         lam=LAMBDA)
             buffer.add(transitions)
             game_lengths.append(len(transitions))
 
@@ -163,7 +166,7 @@ def main():
 
         elapsed = time.time() - t0
         print(f"[iter {iteration:4d}] "
-              f"p_loss={avg_p:.4f}  v_loss={avg_v:.4f}  "
+              f"p_loss={avg_p:.2f}  v_loss={avg_v:.4f}  "
               f"win_rate={win_rate:.2f}  "
               f"buf={len(buffer)}  avg_game={avg_length:.0f}  "
               f"t={elapsed:.1f}s  {updated}")

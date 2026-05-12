@@ -53,7 +53,7 @@ class Trainer:
         chosen_log_probs = log_probs.gather(1, move_indices.unsqueeze(1)).squeeze(1)  # (B,)
         policy_loss = -(chosen_log_probs * advantage).mean()
 
-        # Value loss: plain MSE against {-1, 0, +1} targets
+        # Value loss: plain MSE against {-1, 0, +1} discounted by time with TD(\lambda) targets
         value_loss = F.mse_loss(value, value_targets)
 
         loss = policy_loss + value_loss
