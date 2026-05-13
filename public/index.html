@@ -10,13 +10,23 @@
 body { font-family: system-ui, sans-serif; background: #1a1a2e; color: #eee;
        display: flex; flex-direction: column; align-items: center; min-height: 100vh; padding: 20px; }
 h1 { margin-bottom: 10px; color: #e94560; }
-#controls { margin-bottom: 15px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; justify-content: center; }
+#controls { margin-bottom: 15px; display: flex; gap: 12px; align-items: flex-start; flex-wrap: wrap; justify-content: center; }
 select, button { padding: 6px 12px; border-radius: 4px; border: none; font-size: 14px; cursor: pointer; }
 button { background: #e94560; color: #fff; }
 button:hover { background: #ff6b6b; }
-select { background: #16213e; color: #eee; border: 1px solid #444; }
+select { background: #16213e; color: #eee; border: 1px solid #444; width: 100%; }
 #music-btn { background: #16213e; border: 1px solid #444; font-size: 18px; padding: 6px 10px; }
 #music-btn:hover { background: #1a1a4e; }
+.player-card { background: #16213e; border: 1px solid #444; border-radius: 6px; padding: 10px 14px; display: flex; flex-direction: column; gap: 7px; min-width: 160px; }
+.card-header { font-weight: 600; font-size: 14px; }
+.neural-opts { display: flex; flex-direction: column; gap: 5px; font-size: 13px; }
+.neural-opts label { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+.neural-opts input[type=range] { width: 75px; accent-color: #e94560; cursor: pointer; }
+.neural-opts input[type=number] { width: 55px; background: #0f3460; color: #eee; border: 1px solid #555; border-radius: 3px; padding: 2px 4px; font-size: 13px; }
+.swap-col { display: flex; align-items: center; padding-top: 28px; }
+.swap-col button { background: #16213e; border: 1px solid #555; font-size: 20px; padding: 6px 10px; }
+.swap-col button:hover { background: #1a1a4e; }
+.action-col { display: flex; flex-direction: column; gap: 8px; align-items: stretch; padding-top: 28px; }
 #status { margin-bottom: 10px; font-size: 16px; min-height: 24px; }
 canvas { cursor: crosshair; border-radius: 4px; box-shadow: 0 4px 20px rgba(0,0,0,0.5); }
 .thinking { animation: pulse 1s infinite; }
@@ -26,10 +36,49 @@ canvas { cursor: crosshair; border-radius: 4px; box-shadow: 0 4px 20px rgba(0,0,
 <body>
 <h1>Gomoku</h1>
 <div id="controls">
-  <label>Black: <select id="black"><option value="human">Human</option><option value="smart" selected>Smart AI</option><option value="random">Random AI</option></select></label>
-  <label>White: <select id="white"><option value="human">Human</option><option value="smart" selected>Smart AI</option><option value="random">Random AI</option></select></label>
-  <button onclick="newGame()">New Game</button>
-  <button id="music-btn" onclick="toggleMusic()" title="Toggle Music">🔇</button>
+  <div class="player-card">
+    <div class="card-header">⚫ Black</div>
+    <select id="black" onchange="onPolicyChange('black')">
+      <option value="human">Human</option>
+      <option value="smart" selected>Smart AI</option>
+      <option value="random">Random AI</option>
+    </select>
+    <div class="neural-opts" id="neural-opts-black" style="display:none">
+      <label>Temp
+        <input type="range" id="temp-black" min="0" max="1" step="0.05" value="0.5"
+               oninput="document.getElementById('temp-black-val').textContent=parseFloat(this.value).toFixed(2)">
+        <span id="temp-black-val">0.50</span>
+      </label>
+      <label><input type="checkbox" id="mcts-black" onchange="onMctsChange('black')"> MCTS</label>
+      <div id="mcts-sims-row-black" style="display:none">
+        <label>Sims <input type="number" id="sims-black" value="100" min="10" max="800" step="10"></label>
+      </div>
+    </div>
+  </div>
+  <div class="swap-col"><button onclick="swapPlayers()" title="Swap players">⇄</button></div>
+  <div class="player-card">
+    <div class="card-header">⚪ White</div>
+    <select id="white" onchange="onPolicyChange('white')">
+      <option value="human">Human</option>
+      <option value="smart" selected>Smart AI</option>
+      <option value="random">Random AI</option>
+    </select>
+    <div class="neural-opts" id="neural-opts-white" style="display:none">
+      <label>Temp
+        <input type="range" id="temp-white" min="0" max="1" step="0.05" value="0.5"
+               oninput="document.getElementById('temp-white-val').textContent=parseFloat(this.value).toFixed(2)">
+        <span id="temp-white-val">0.50</span>
+      </label>
+      <label><input type="checkbox" id="mcts-white" onchange="onMctsChange('white')"> MCTS</label>
+      <div id="mcts-sims-row-white" style="display:none">
+        <label>Sims <input type="number" id="sims-white" value="100" min="10" max="800" step="10"></label>
+      </div>
+    </div>
+  </div>
+  <div class="action-col">
+    <button onclick="newGame()">New Game</button>
+    <button id="music-btn" onclick="toggleMusic()" title="Toggle Music">🔇</button>
+  </div>
 </div>
 <div id="status">Click "New Game" to start</div>
 <canvas id="board" width="620" height="620"></canvas>
@@ -229,10 +278,67 @@ let aiLoopRunning = false;
 
 const API_BASE = '';
 
-// --- Live policy reading (always reads current dropdown value) ---
-function getPolicy(player) {
-  if (player === 1) return document.getElementById('black').value;
-  return document.getElementById('white').value;
+// --- Player config helpers ---
+function isHuman(player) {
+  const side = player === 1 ? 'black' : 'white';
+  return document.getElementById(side).value === 'human';
+}
+
+function getPlayerConfig(player) {
+  const side = player === 1 ? 'black' : 'white';
+  const policy = document.getElementById(side).value;
+  const temperature = parseFloat(document.getElementById(`temp-${side}`).value);
+  const mctsChecked = document.getElementById(`mcts-${side}`).checked;
+  const sims = parseInt(document.getElementById(`sims-${side}`).value) || 100;
+  return { policy, temperature, mcts_simulations: mctsChecked ? sims : 0 };
+}
+
+// --- Neural options visibility ---
+function onPolicyChange(side) {
+  const val = document.getElementById(side).value;
+  const isNeural = val.startsWith('checkpoint:');
+  document.getElementById(`neural-opts-${side}`).style.display = isNeural ? '' : 'none';
+  if (!isNeural) {
+    document.getElementById(`mcts-${side}`).checked = false;
+    document.getElementById(`mcts-sims-row-${side}`).style.display = 'none';
+  }
+  // Trigger mid-game AI if needed
+  const player = side === 'black' ? 1 : 2;
+  if (!game || game.winner !== null) return;
+  if (game.currentPlayer === player && !isHuman(player)) aiTurnLoop();
+}
+
+function onMctsChange(side) {
+  const checked = document.getElementById(`mcts-${side}`).checked;
+  document.getElementById(`mcts-sims-row-${side}`).style.display = checked ? '' : 'none';
+}
+
+// --- Swap players ---
+function swapPlayers() {
+  const bSel = document.getElementById('black');
+  const wSel = document.getElementById('white');
+  const bTmp = bSel.value; bSel.value = wSel.value; wSel.value = bTmp;
+
+  const sides = ['black', 'white'];
+  const swapVal = (id) => {
+    const [aEl, bEl] = sides.map(s => document.getElementById(id.replace('SIDE', s)));
+    const tmp = aEl.value; aEl.value = bEl.value; bEl.value = tmp;
+  };
+  swapVal('temp-SIDE');
+  swapVal('sims-SIDE');
+
+  const bMcts = document.getElementById('mcts-black').checked;
+  const wMcts = document.getElementById('mcts-white').checked;
+  document.getElementById('mcts-black').checked = wMcts;
+  document.getElementById('mcts-white').checked = bMcts;
+
+  // Sync displayed values and visibility
+  for (const s of sides) {
+    const tempVal = document.getElementById(`temp-${s}`).value;
+    document.getElementById(`temp-${s}-val`).textContent = parseFloat(tempVal).toFixed(2);
+    onPolicyChange(s);
+    onMctsChange(s);
+  }
 }
 
 // --- Game Logic ---
@@ -288,14 +394,14 @@ function makeMove(row, col) {
 
 // --- AI Communication ---
 
-async function requestAIMove(policyName) {
+async function requestAIMove(config) {
   const res = await fetch(`${API_BASE}/api/move`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       board: game.board,
       current_player: game.currentPlayer,
-      policy: policyName,
+      ...config,
     }),
   });
   if (!res.ok) {
@@ -310,16 +416,16 @@ async function aiTurnLoop() {
   aiLoopRunning = true;
 
   while (game && game.winner === null) {
-    const policy = getPolicy(game.currentPlayer);  // re-read dropdown each iteration
-    if (policy === 'human') break;
+    if (isHuman(game.currentPlayer)) break;
+    const config = getPlayerConfig(game.currentPlayer);  // re-read each iteration
 
     thinking = true;
     render();
 
     try {
-      const { row, col } = await requestAIMove(policy);
-      // Re-check policy after await — user might have switched mid-request
-      if (getPolicy(game.currentPlayer) === 'human') {
+      const { row, col } = await requestAIMove(config);
+      // Re-check after await — user might have switched mid-request
+      if (isHuman(game.currentPlayer)) {
         thinking = false;
         render();
         break;
@@ -337,7 +443,7 @@ async function aiTurnLoop() {
     render();
 
     // Small delay between AI-vs-AI moves for visibility
-    if (game.winner === null && getPolicy(game.currentPlayer) !== 'human') {
+    if (game.winner === null && !isHuman(game.currentPlayer)) {
       await new Promise(r => setTimeout(r, 200));
     }
   }
@@ -347,20 +453,7 @@ async function aiTurnLoop() {
   render();
 }
 
-// --- Dropdown change listeners (mid-game toggle) ---
-document.getElementById('black').addEventListener('change', () => {
-  if (!game || game.winner !== null) return;
-  if (game.currentPlayer === 1 && getPolicy(1) !== 'human') {
-    aiTurnLoop();
-  }
-});
-
-document.getElementById('white').addEventListener('change', () => {
-  if (!game || game.winner !== null) return;
-  if (game.currentPlayer === 2 && getPolicy(2) !== 'human') {
-    aiTurnLoop();
-  }
-});
+// Dropdown change listeners are handled by onPolicyChange() via onchange= attributes
 
 // --- Drawing ---
 
@@ -432,14 +525,14 @@ function newGame() {
   aiLoopRunning = false;
   render();
   // If first player is AI, start the AI loop
-  if (getPolicy(1) !== 'human') {
+  if (!isHuman(1)) {
     aiTurnLoop();
   }
 }
 
 canvas.addEventListener('click', async (e) => {
   if (!game || game.winner !== null || thinking) return;
-  if (getPolicy(game.currentPlayer) !== 'human') return;
+  if (!isHuman(game.currentPlayer)) return;
 
   const rect = canvas.getBoundingClientRect();
   const x = e.clientX - rect.left, y = e.clientY - rect.top;
@@ -451,7 +544,7 @@ canvas.addEventListener('click', async (e) => {
   render();
 
   // After human move, let AI respond if next player is AI
-  if (game.winner === null && getPolicy(game.currentPlayer) !== 'human') {
+  if (game.winner === null && !isHuman(game.currentPlayer)) {
     aiTurnLoop();
   }
 });
