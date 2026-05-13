@@ -1,12 +1,13 @@
 """Training step logic.
 
-Loss = policy_loss + value_loss
-  policy_loss: REINFORCE — -log_prob(chosen_move) * advantage
-               advantage = value_target - value.detach() (actor-critic baseline)
-  value_loss:  MSE between predicted value and game outcome
+Total loss = policy_loss + value_loss + bc_coeff * bc_loss
 
-The baseline subtracts the network's own value estimate, reducing gradient
-variance while keeping the policy gradient unbiased.
+  policy_loss: REINFORCE — -log_prob(chosen_move) * advantage
+               advantage = G^λ_t - V(s_t)  (TD(λ) return minus value baseline)
+  value_loss:  MSE between V(s_t) and G^λ_t
+  bc_loss:     -log_prob(teacher_move)  (cross-entropy vs teacher policy)
+               bc_coeff=0.0 → pure RL (identical to no-BC behaviour)
+               bc_coeff>0   → nudges policy toward teacher policy's moves
 """
 
 from typing import Tuple
@@ -25,43 +26,48 @@ class Trainer:
         net: PolicyValueNet,
         lr: float = 1e-3,
         device: str = "cpu",
+        bc_coeff: float = 0.0,
     ):
         self.net = net.to(device)
         self.device = device
+        self.bc_coeff = bc_coeff
         self.optimizer = torch.optim.Adam(net.parameters(), lr=lr)
 
     def train_step(
             self,
-            states: torch.Tensor,        # (B, 3, H, W)
-            move_indices: torch.Tensor,  # (B,)     — flat index of chosen move
-            value_targets: torch.Tensor, # (B,)     — +1 / -1 / 0
-    ) -> Tuple[float, float]:
-        """One gradient step. Returns (policy_loss, value_loss) as Python floats."""
-        states        = states.to(self.device)
-        move_indices  = move_indices.to(self.device)
-        value_targets = value_targets.to(self.device)
+            states: torch.Tensor,             # (B, 2, H, W)
+            move_indices: torch.Tensor,       # (B,) — flat index of chosen move
+            value_targets: torch.Tensor,      # (B,) — TD(λ) return
+            teacher_move_indices: torch.Tensor,# (B,) — teacher policy's move (BC target)
+    ) -> Tuple[float, float, float]:
+        """One gradient step. Returns (policy_loss, value_loss, bc_loss)."""
+        states               = states.to(self.device)
+        move_indices         = move_indices.to(self.device)
+        value_targets        = value_targets.to(self.device)
+        teacher_move_indices = teacher_move_indices.to(self.device)
 
         self.net.train()
         policy_logits, value = self.net(states)
+        log_probs = F.log_softmax(policy_logits, dim=-1)  # (B, H*W)
 
-        # REINFORCE policy loss
-        # advantage = outcome - baseline; baseline = value estimate (detached so
-        # it doesn't pull gradients through the value head via the policy loss)
-        # advantage = value_targets - value.detach()                          # (B,)
-        advantage = value_targets # vannilla version without baseline --- IGNORE ---
-        log_probs = F.log_softmax(policy_logits, dim=-1)                   # (B, H*W)
+        # REINFORCE: weight log-prob of chosen move by TD(λ) advantage
+        advantage        = value_targets - value.detach()                             # (B,)
         chosen_log_probs = log_probs.gather(1, move_indices.unsqueeze(1)).squeeze(1)  # (B,)
-        policy_loss = -(chosen_log_probs * advantage).mean()
+        policy_loss      = -(chosen_log_probs * advantage).mean()
 
         # Value loss: plain MSE against {-1, 0, +1} discounted by time with TD(\lambda) targets
         value_loss = F.mse_loss(value, value_targets)
 
-        loss = policy_loss + value_loss
+        # Behavioural cloning: cross-entropy vs teacher policy's move
+        teacher_log_probs = log_probs.gather(1, teacher_move_indices.unsqueeze(1)).squeeze(1)  # (B,)
+        bc_loss = -teacher_log_probs.mean()
+
+        loss = policy_loss + value_loss + self.bc_coeff * bc_loss
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
 
-        return policy_loss.item(), value_loss.item()
+        return policy_loss.item(), value_loss.item(), bc_loss.item()
 
     def save(self, path: str) -> None:
         torch.save(self.net.state_dict(), path)

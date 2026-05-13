@@ -41,6 +41,9 @@ TEMPERATURE = 1.0  # exploration temperature during self-play
 EVAL_TEMPERATURE = 0.0  # deterministic during evaluation
 GAMMA = 0.95  # discount factor: rewards winning fast; 1.0 = flat outcome
 LAMBDA = 0.9  # TD(λ) mixing: 1.0 = pure MC, 0.0 = pure TD(0)
+BC_COEFF = 2.0  # behavioural cloning weight: 0.0 = pure RL, higher = more imitation of teacher
+# Teacher policy for BC supervision. Swap to MCTSPolicy(net, ...) for AlphaZero-style distillation.
+TEACHER = None  # None → defaults to SmartPolicy() inside run_episode
 
 CHECKPOINT_DIR = Path("checkpoints")
 
@@ -89,7 +92,7 @@ def main():
     net = PolicyValueNet(board_size=BOARD_SIZE,
                          num_blocks=NUM_BLOCKS,
                          channels=CHANNELS)
-    trainer = Trainer(net, lr=LR, device=device)
+    trainer = Trainer(net, lr=LR, device=device, bc_coeff=BC_COEFF)
 
     if args.resume:
         trainer.load(args.resume)
@@ -122,7 +125,8 @@ def main():
                                          current_policy,
                                          record=True,
                                          gamma=GAMMA,
-                                         lam=LAMBDA)
+                                         lam=LAMBDA,
+                                         teacher=TEACHER)
             buffer.add(transitions)
             game_lengths.append(len(transitions))
 
@@ -135,21 +139,24 @@ def main():
             )
             continue
 
-        total_p_loss = total_v_loss = 0.0
+        total_p_loss = total_v_loss = total_bc_loss = 0.0
         first_p, first_v = None, None
         last_p, last_v = None, None
         for step in range(TRAIN_STEPS_PER_ITER):
-            states, _, value_targets, move_indices = buffer.sample(BATCH_SIZE)
-            p_loss, v_loss = trainer.train_step(states, move_indices,
-                                                value_targets)
+            states, _, value_targets, move_indices, teacher_move_indices = buffer.sample(
+                BATCH_SIZE)
+            p_loss, v_loss, bc_loss = trainer.train_step(
+                states, move_indices, value_targets, teacher_move_indices)
             total_p_loss += p_loss
             total_v_loss += v_loss
+            total_bc_loss += bc_loss
             if step == 0:
                 first_p, first_v = p_loss, v_loss
             last_p, last_v = p_loss, v_loss
 
         avg_p = total_p_loss / TRAIN_STEPS_PER_ITER
         avg_v = total_v_loss / TRAIN_STEPS_PER_ITER
+        avg_bc = total_bc_loss / TRAIN_STEPS_PER_ITER
 
         # ── 3. Evaluate ─────────────────────────────────────────────────────
         new_policy = NeuralPolicy(net,
@@ -172,8 +179,9 @@ def main():
 
         elapsed = time.time() - t0
         print(f"[iter {iteration:4d}] "
-              f"p_loss={avg_p:.2f}(↓{first_p:.2f}→{last_p:.2f})  "
-              f"v_loss={avg_v:.4f}(↓{first_v:.4f}→{last_v:.4f})  "
+              f"p={avg_p:.2f}(↓{first_p:.2f}→{last_p:.2f})  "
+              f"v={avg_v:.4f}(↓{first_v:.4f}→{last_v:.4f})  "
+              f"bc={avg_bc:.2f}  "
               f"win_rate={win_rate:.2f}  "
               f"buf={len(buffer)}  avg_game={avg_length:.0f}  "
               f"t={elapsed:.1f}s  {updated}")

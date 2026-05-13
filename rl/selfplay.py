@@ -15,6 +15,7 @@ import torch
 import torch.nn.functional as F
 from game import GameState
 from policy import Policy
+from policy import SmartPolicy as _SmartPolicy
 
 from rl.network import PolicyValueNet
 from rl.replay import Episode, Transition
@@ -81,18 +82,22 @@ def run_episode(
     record: bool = True,
     gamma: float = 1.0,
     lam: float = 1.0,
+    teacher: Optional[Policy] = None,
 ) -> Tuple[Optional[int], List[Transition]]:
     """Play one complete game and return (winner, transitions).
 
     winner: 1, 2, or 0 (draw).
     transitions: empty list when record=False or when policies are not NeuralPolicy.
 
-    The two policies play alternately: policy1 plays as player 1 (black),
-    policy2 plays as player 2 (white).
+    teacher: policy queried at each step to provide the BC supervision target.
+             Defaults to SmartPolicy(). Can be any Policy — e.g. an MCTSPolicy
+             for AlphaZero-style distillation of search into the fast policy head.
     """
     state = GameState.new()
     episode = Episode()
     policies = {1: policy1, 2: policy2}
+    # Teacher provides BC supervision targets; stateless so safe to instantiate once
+    teacher = teacher if teacher is not None else _SmartPolicy()
 
     while state.winner is None:
         player = state.current_player
@@ -103,12 +108,16 @@ def run_episode(
             state_tensor = policy.net.encode_state(state).squeeze(0)  # (2,H,W)
             H = state.board.shape[0]
             row, col = divmod(move_index, H)
+            # Query teacher on the same state for the BC supervision target
+            tr, tc = teacher.select_move(state)
+            teacher_move_index = tr * H + tc
             episode.record(
                 state=state_tensor,
                 move_index=move_index,
                 policy_target=dist.cpu(),
                 value_pred=value_pred,
                 player=player,
+                teacher_move_index=teacher_move_index,
             )
         else:
             row, col = policy.select_move(state)

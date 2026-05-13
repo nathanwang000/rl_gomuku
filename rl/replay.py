@@ -27,12 +27,13 @@ import torch
 @dataclass
 class Transition:
     """One (state, move) pair from a game, ready for training."""
-    state:        torch.Tensor   # (2, H, W) float
-    move_index:   int            # flat index = row * W + col
-    policy_target: torch.Tensor  # (H*W,) — unused placeholder (kept for buffer API)
-    value_pred:   float          # network's V estimate at this state (for TD bootstrap)
-    value_target: float          # filled in by finalise()
-    player:       int            # 1 or 2 — who made this move
+    state:            torch.Tensor   # (2, H, W) float
+    move_index:       int            # flat index of the move the neural policy took
+    policy_target:    torch.Tensor   # (H*W,) — unused placeholder (kept for buffer API)
+    value_pred:       float          # network's V estimate at this state (for TD bootstrap)
+    value_target:     float          # filled in by finalise()
+    player:           int            # 1 or 2 — who made this move
+    teacher_move_index: int          # flat index of the teacher policy's move (for BC loss)
 
 
 class Episode:
@@ -48,6 +49,7 @@ class Episode:
         policy_target: torch.Tensor,
         value_pred: float,
         player: int,
+        teacher_move_index: int,
     ) -> None:
         self._transitions.append(
             Transition(
@@ -57,6 +59,7 @@ class Episode:
                 value_pred=value_pred,
                 value_target=0.0,  # filled by finalise()
                 player=player,
+                teacher_move_index=teacher_move_index,
             ))
 
     def finalise(
@@ -116,19 +119,17 @@ class ReplayBuffer:
 
     def sample(
         self, batch_size: int
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-        """Returns (states, policy_targets, value_targets, move_indices) tensors."""
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Returns (states, policy_targets, value_targets, move_indices, smart_move_indices)."""
         batch = random.sample(self._buf, min(batch_size, len(self._buf)))
 
-        states = torch.stack([t.state for t in batch])  # (B,3,H,W)
-        policy_targets = torch.stack([t.policy_target
-                                      for t in batch])  # (B,H*W)
-        value_targets = torch.tensor([t.value_target for t in batch],
-                                     dtype=torch.float32)  # (B,)
-        move_indices = torch.tensor([t.move_index for t in batch],
-                                    dtype=torch.long)  # (B,)
+        states       = torch.stack([t.state for t in batch])           # (B,2,H,W)
+        policy_targets = torch.stack([t.policy_target for t in batch]) # (B,H*W)
+        value_targets  = torch.tensor([t.value_target for t in batch], dtype=torch.float32)  # (B,)
+        move_indices   = torch.tensor([t.move_index for t in batch],   dtype=torch.long)     # (B,)
+        teacher_move_indices = torch.tensor([t.teacher_move_index for t in batch], dtype=torch.long)  # (B,)
 
-        return states, policy_targets, value_targets, move_indices
+        return states, policy_targets, value_targets, move_indices, teacher_move_indices
 
     def __len__(self) -> int:
         return len(self._buf)
