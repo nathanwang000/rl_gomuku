@@ -26,9 +26,10 @@ from rl.trainer import Trainer
 
 # ── Hyperparameters ────────────────────────────────────────────────────────────
 
+ON_POLICY = False  # whether to clear replay buffer each iteration (True = on-policy, False = off-policy)
 ITERATIONS = 50  # outer training iterations
 GAMES_PER_ITER = 20  # self-play games collected each iteration
-TRAIN_STEPS_PER_ITER = 50  # gradient steps taken each iteration
+TRAIN_STEPS_PER_ITER = 300  # gradient steps taken each iteration
 BATCH_SIZE = 256
 
 EVAL_GAMES = 2  # games played to compare new vs old policy
@@ -41,9 +42,9 @@ TEMPERATURE = 1.0  # exploration temperature during self-play
 EVAL_TEMPERATURE = 0.0  # deterministic during evaluation
 GAMMA = 0.95  # discount factor: rewards winning fast; 1.0 = flat outcome
 LAMBDA = 0.9  # TD(λ) mixing: 1.0 = pure MC, 0.0 = pure TD(0)
-BC_COEFF = 2.0      # behavioural cloning weight: 0.0 = pure RL, higher = more imitation of teacher
-POLICY_COEFF = 1.0  # set to 0.0 to disable REINFORCE loss (e.g. to debug BC or value alone)
-VALUE_COEFF = 1.0   # set to 0.0 to disable value loss
+BC_COEFF = 1.0      # behavioural cloning weight: 0.0 = pure RL, higher = more imitation of teacher
+POLICY_COEFF = 0 # 1.0  # set to 0.0 to disable REINFORCE loss (e.g. to debug BC or value alone)
+VALUE_COEFF = 0 # 1.0   # set to 0.0 to disable value loss
 # Teacher policy for BC supervision. Swap to MCTSPolicy(net, ...) for AlphaZero-style distillation.
 TEACHER = None  # None → defaults to SmartPolicy() inside run_episode
 
@@ -117,7 +118,8 @@ def main():
 
         # ── 1. Collect ──────────────────────────────────────────────────────
         # Clear buffer so we only train on data from the current policy (on-policy)
-        buffer.clear()
+        if ON_POLICY:
+            buffer.clear()
         current_policy = NeuralPolicy(net,
                                       temperature=TEMPERATURE,
                                       device=device)
@@ -143,8 +145,8 @@ def main():
             continue
 
         total_p_loss = total_v_loss = total_bc_loss = 0.0
-        first_p, first_v = None, None
-        last_p, last_v = None, None
+        first_p, first_v, first_bc = None, None, None
+        last_p, last_v, last_bc = None, None, None
         for step in range(TRAIN_STEPS_PER_ITER):
             states, _, value_targets, move_indices, teacher_move_indices = buffer.sample(
                 BATCH_SIZE)
@@ -154,8 +156,8 @@ def main():
             total_v_loss += v_loss
             total_bc_loss += bc_loss
             if step == 0:
-                first_p, first_v = p_loss, v_loss
-            last_p, last_v = p_loss, v_loss
+                first_p, first_v, first_bc = p_loss, v_loss, bc_loss
+            last_p, last_v, last_bc = p_loss, v_loss, bc_loss
 
         avg_p = total_p_loss / TRAIN_STEPS_PER_ITER
         avg_v = total_v_loss / TRAIN_STEPS_PER_ITER
@@ -181,10 +183,13 @@ def main():
         trainer.save(str(ckpt))
 
         elapsed = time.time() - t0
+        p_arrow = '↓' if last_p < first_p else '↑'
+        v_arrow = '↓' if last_v < first_v else '↑'
+        bc_arrow = '↓' if last_bc < first_bc else '↑'
         print(f"[iter {iteration:4d}] "
-              f"p={avg_p:.2f}(↓{first_p:.2f}→{last_p:.2f})  "
-              f"v={avg_v:.4f}(↓{first_v:.4f}→{last_v:.4f})  "
-              f"bc={avg_bc:.2f}  "
+              f"p={avg_p:.2f}({p_arrow}{first_p:.2f}→{last_p:.2f})  "
+              f"v={avg_v:.4f}({v_arrow}{first_v:.4f}→{last_v:.4f})  "
+              f"bc={avg_bc:.2f}({bc_arrow}{first_bc:.2f}→{last_bc:.2f})  "
               f"win_rate={win_rate:.2f}  "
               f"buf={len(buffer)}  avg_game={avg_length:.0f}  "
               f"t={elapsed:.1f}s  {updated}")
