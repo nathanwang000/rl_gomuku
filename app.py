@@ -97,6 +97,7 @@ class GomokuHandler(SimpleHTTPRequestHandler):
         policy_name = body.get("policy", "smart")
         temperature = float(body.get("temperature", 0.0))
         mcts_simulations = int(body.get("mcts_simulations", 0))
+        print(f"[move] policy={policy_name!r}  temperature={temperature}  mcts_sims={mcts_simulations}")
 
         if board is None or current_player is None:
             self._respond(400, {"error": "Missing 'board' or 'current_player'"})
