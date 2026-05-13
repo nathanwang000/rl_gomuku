@@ -1,6 +1,6 @@
 """Training step logic.
 
-Total loss = policy_loss + value_loss + bc_coeff * bc_loss
+Total loss = policy_coeff * policy_loss + value_coeff * value_loss + bc_coeff * bc_loss
 
   policy_loss: REINFORCE — -log_prob(chosen_move) * advantage
                advantage = G^λ_t - V(s_t)  (TD(λ) return minus value baseline)
@@ -26,11 +26,15 @@ class Trainer:
         net: PolicyValueNet,
         lr: float = 1e-3,
         device: str = "cpu",
+        policy_coeff: float = 1.0,
+        value_coeff: float = 1.0,
         bc_coeff: float = 0.0,
     ):
         self.net = net.to(device)
         self.device = device
-        self.bc_coeff = bc_coeff
+        self.policy_coeff = policy_coeff
+        self.value_coeff  = value_coeff
+        self.bc_coeff     = bc_coeff
         self.optimizer = torch.optim.Adam(net.parameters(), lr=lr)
 
     def train_step(
@@ -62,7 +66,7 @@ class Trainer:
         teacher_log_probs = log_probs.gather(1, teacher_move_indices.unsqueeze(1)).squeeze(1)  # (B,)
         bc_loss = -teacher_log_probs.mean()
 
-        loss = policy_loss + value_loss + self.bc_coeff * bc_loss
+        loss = self.policy_coeff * policy_loss + self.value_coeff * value_loss + self.bc_coeff * bc_loss
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()

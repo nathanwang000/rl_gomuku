@@ -41,7 +41,9 @@ TEMPERATURE = 1.0  # exploration temperature during self-play
 EVAL_TEMPERATURE = 0.0  # deterministic during evaluation
 GAMMA = 0.95  # discount factor: rewards winning fast; 1.0 = flat outcome
 LAMBDA = 0.9  # TD(λ) mixing: 1.0 = pure MC, 0.0 = pure TD(0)
-BC_COEFF = 2.0  # behavioural cloning weight: 0.0 = pure RL, higher = more imitation of teacher
+BC_COEFF = 2.0      # behavioural cloning weight: 0.0 = pure RL, higher = more imitation of teacher
+POLICY_COEFF = 1.0  # set to 0.0 to disable REINFORCE loss (e.g. to debug BC or value alone)
+VALUE_COEFF = 1.0   # set to 0.0 to disable value loss
 # Teacher policy for BC supervision. Swap to MCTSPolicy(net, ...) for AlphaZero-style distillation.
 TEACHER = None  # None → defaults to SmartPolicy() inside run_episode
 
@@ -92,7 +94,8 @@ def main():
     net = PolicyValueNet(board_size=BOARD_SIZE,
                          num_blocks=NUM_BLOCKS,
                          channels=CHANNELS)
-    trainer = Trainer(net, lr=LR, device=device, bc_coeff=BC_COEFF)
+    trainer = Trainer(net, lr=LR, device=device,
+                      policy_coeff=POLICY_COEFF, value_coeff=VALUE_COEFF, bc_coeff=BC_COEFF)
 
     if args.resume:
         trainer.load(args.resume)
