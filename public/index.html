@@ -10,24 +10,32 @@
 body { font-family: system-ui, sans-serif; background: #1a1a2e; color: #eee;
        display: flex; flex-direction: column; align-items: center; min-height: 100vh; padding: 20px; }
 h1 { margin-bottom: 10px; color: #e94560; }
-#controls { margin-bottom: 15px; display: flex; gap: 12px; align-items: flex-start; flex-wrap: wrap; justify-content: center; }
+#controls { margin-bottom: 15px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; justify-content: center; }
 select, button { padding: 6px 12px; border-radius: 4px; border: none; font-size: 14px; cursor: pointer; }
 button { background: #e94560; color: #fff; }
 button:hover { background: #ff6b6b; }
 select { background: #16213e; color: #eee; border: 1px solid #444; width: 100%; }
-#music-btn { background: #16213e; border: 1px solid #444; font-size: 18px; padding: 6px 10px; }
-#music-btn:hover { background: #1a1a4e; }
+
 .player-card { background: #16213e; border: 1px solid #444; border-radius: 6px; padding: 10px 14px; display: flex; flex-direction: column; gap: 7px; min-width: 160px; }
 .card-header { font-weight: 600; font-size: 14px; }
 .neural-opts { display: flex; flex-direction: column; gap: 5px; font-size: 13px; }
 .neural-opts label { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
 .neural-opts input[type=range] { width: 75px; accent-color: #e94560; cursor: pointer; }
 .neural-opts input[type=number] { width: 55px; background: #0f3460; color: #eee; border: 1px solid #555; border-radius: 3px; padding: 2px 4px; font-size: 13px; }
-.swap-col { display: flex; align-items: center; padding-top: 28px; }
+.swap-col { display: flex; align-items: center; }
 .swap-col button { background: #16213e; border: 1px solid #555; font-size: 20px; padding: 6px 10px; }
 .swap-col button:hover { background: #1a1a4e; }
-.action-col { display: flex; flex-direction: column; gap: 8px; align-items: stretch; padding-top: 28px; }
-#status { margin-bottom: 10px; font-size: 16px; min-height: 24px; }
+.action-col { display: flex; flex-direction: column; gap: 8px; align-items: stretch; }
+.undo-redo { display: flex; gap: 6px; }
+.undo-redo button { flex: 1; background: #16213e; border: 1px solid #555; font-size: 13px; padding: 6px 8px; }
+.undo-redo button:hover:not(:disabled) { background: #1a1a4e; }
+.undo-redo button:disabled { opacity: 0.3; cursor: not-allowed; pointer-events: none; }
+#resume-btn { background: #27ae60; display: none; }
+#resume-btn:hover { background: #2ecc71; }
+#music-btn { background: #16213e; border: 1px solid #444; font-size: 18px; padding: 6px 10px; }
+#music-btn:hover { background: #1a1a4e; }
+#status { margin-bottom: 10px; font-size: 16px; min-height: 24px; transition: color 0.2s; }
+#status.paused { color: #f39c12; }
 canvas { cursor: crosshair; border-radius: 4px; box-shadow: 0 4px 20px rgba(0,0,0,0.5); }
 .thinking { animation: pulse 1s infinite; }
 @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
@@ -77,6 +85,11 @@ canvas { cursor: crosshair; border-radius: 4px; box-shadow: 0 4px 20px rgba(0,0,
   </div>
   <div class="action-col">
     <button onclick="newGame()">New Game</button>
+    <div class="undo-redo">
+      <button id="undo-btn" onclick="undoMove()" title="Undo last move" disabled>↩</button>
+      <button id="redo-btn" onclick="redoMove()" title="Redo move" disabled>↪</button>
+    </div>
+    <button id="resume-btn" onclick="resumeGame()">▶ Resume</button>
     <button id="music-btn" onclick="toggleMusic()" title="Toggle Music">🔇</button>
   </div>
 </div>
@@ -276,6 +289,52 @@ let game = null;
 let thinking = false;
 let aiLoopRunning = false;
 
+function snapshotGame() {
+  return {
+    board: game.board.map(r => [...r]),
+    currentPlayer: game.currentPlayer,
+    winner: game.winner,
+    lastMove: game.lastMove ? [...game.lastMove] : null,
+  };
+}
+
+function restoreSnapshot(snap) {
+  game.board = snap.board.map(r => [...r]);
+  game.currentPlayer = snap.currentPlayer;
+  game.winner = snap.winner;
+  game.lastMove = snap.lastMove ? [...snap.lastMove] : null;
+}
+
+function undoMove() {
+  if (!game || game.history.length === 0) return;
+  game.future.push(snapshotGame());
+  restoreSnapshot(game.history.pop());
+  game.paused = true;
+  thinking = false;
+  aiLoopRunning = false;
+  render();
+}
+
+function redoMove() {
+  if (!game || game.future.length === 0) return;
+  game.history.push(snapshotGame());
+  restoreSnapshot(game.future.pop());
+  game.paused = true;
+  thinking = false;
+  aiLoopRunning = false;
+  render();
+}
+
+function resumeGame() {
+  if (!game) return;
+  game.paused = false;
+  render();
+  if (game.winner === null && !isHuman(game.currentPlayer)) {
+    aiTurnLoop();
+  }
+  // If game is already over, just re-render to show the result (no AI needed)
+}
+
 const API_BASE = '';
 
 // --- Player config helpers ---
@@ -379,6 +438,9 @@ function makeMove(row, col) {
   if (row < 0 || row >= SIZE || col < 0 || col >= SIZE) return false;
   if (game.board[row][col] !== 0) return false;
 
+  game.history.push(snapshotGame());
+  game.future = [];
+
   game.board[row][col] = game.currentPlayer;
   game.lastMove = [row, col];
 
@@ -413,9 +475,10 @@ async function requestAIMove(config) {
 
 async function aiTurnLoop() {
   if (aiLoopRunning) return;  // prevent multiple concurrent loops
+  if (game && game.paused) return;  // don't run AI when paused
   aiLoopRunning = true;
 
-  while (game && game.winner === null) {
+  while (game && game.winner === null && !game.paused) {
     if (isHuman(game.currentPlayer)) break;
     const config = getPlayerConfig(game.currentPlayer);  // re-read each iteration
 
@@ -502,12 +565,45 @@ function drawStones() {
 
 function updateStatus() {
   const el = document.getElementById('status');
-  if (!game) { el.textContent = 'Click "New Game" to start'; el.classList.remove('thinking'); return; }
-  if (game.winner === 1) { el.textContent = '⚫ Black wins!'; el.classList.remove('thinking'); }
-  else if (game.winner === 2) { el.textContent = '⚪ White wins!'; el.classList.remove('thinking'); }
-  else if (game.winner === 0) { el.textContent = 'Draw!'; el.classList.remove('thinking'); }
-  else if (thinking) { el.textContent = (game.currentPlayer === 1 ? '⚫ Black' : '⚪ White') + ' is thinking...'; el.classList.add('thinking'); }
-  else { el.textContent = (game.currentPlayer === 1 ? '⚫ Black' : '⚪ White') + "'s turn"; el.classList.remove('thinking'); }
+  const undoBtn = document.getElementById('undo-btn');
+  const redoBtn = document.getElementById('redo-btn');
+  const resumeBtn = document.getElementById('resume-btn');
+
+  if (!game) {
+    el.textContent = 'Click "New Game" to start';
+    el.classList.remove('thinking', 'paused');
+    undoBtn.disabled = true;
+    redoBtn.disabled = true;
+    resumeBtn.style.display = 'none';
+    return;
+  }
+
+  undoBtn.disabled = game.history.length === 0;
+  redoBtn.disabled = game.future.length === 0;
+  resumeBtn.style.display = game.paused ? 'block' : 'none';
+
+  if (game.winner === 1) {
+    el.textContent = '⚫ Black wins!';
+    el.classList.remove('thinking', 'paused');
+  } else if (game.winner === 2) {
+    el.textContent = '⚪ White wins!';
+    el.classList.remove('thinking', 'paused');
+  } else if (game.winner === 0) {
+    el.textContent = 'Draw!';
+    el.classList.remove('thinking', 'paused');
+  } else if (game.paused) {
+    const who = game.currentPlayer === 1 ? '⚫ Black' : '⚪ White';
+    el.textContent = `Paused — ${who}'s turn`;
+    el.classList.remove('thinking');
+    el.classList.add('paused');
+  } else if (thinking) {
+    el.textContent = (game.currentPlayer === 1 ? '⚫ Black' : '⚪ White') + ' is thinking...';
+    el.classList.add('thinking');
+    el.classList.remove('paused');
+  } else {
+    el.textContent = (game.currentPlayer === 1 ? '⚫ Black' : '⚪ White') + "'s turn";
+    el.classList.remove('thinking', 'paused');
+  }
 }
 
 function render() { drawBoard(); drawStones(); updateStatus(); }
@@ -520,6 +616,9 @@ function newGame() {
     currentPlayer: 1,
     winner: null,
     lastMove: null,
+    history: [],
+    future: [],
+    paused: false,
   };
   thinking = false;
   aiLoopRunning = false;
@@ -531,7 +630,7 @@ function newGame() {
 }
 
 canvas.addEventListener('click', async (e) => {
-  if (!game || game.winner !== null || thinking) return;
+  if (!game || game.winner !== null || thinking || game.paused) return;
   if (!isHuman(game.currentPlayer)) return;
 
   const rect = canvas.getBoundingClientRect();
