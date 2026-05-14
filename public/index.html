@@ -41,6 +41,7 @@ select { background: #16213e; color: #eee; border: 1px solid #444; width: 100%; 
 #policy-bar input[type=checkbox] { accent-color: #e94560; width: 14px; height: 14px; cursor: pointer; }
 canvas { cursor: crosshair; border-radius: 4px; box-shadow: 0 4px 20px rgba(0,0,0,0.5); }
 .thinking { animation: pulse 1s infinite; }
+#policy-tooltip { position: fixed; background: rgba(0,0,0,0.82); color: #eee; font-size: 12px; padding: 4px 8px; border-radius: 4px; pointer-events: none; white-space: nowrap; display: none; z-index: 100; border: 1px solid #555; }
 @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
 </style>
 </head>
@@ -106,6 +107,7 @@ canvas { cursor: crosshair; border-radius: 4px; box-shadow: 0 4px 20px rgba(0,0,
   </label>
 </div>
 <canvas id="board" width="620" height="620"></canvas>
+<div id="policy-tooltip"></div>
 
 <script>
 // ====================== MUSIC ENGINE ======================
@@ -729,6 +731,28 @@ function newGame() {
     aiTurnLoop();
   }
 }
+
+const policyTooltip = document.getElementById('policy-tooltip');
+
+canvas.addEventListener('mousemove', (e) => {
+  if (!game || !game.lastProbs || !game.lastProbs.length) { policyTooltip.style.display = 'none'; return; }
+  if (!document.getElementById('show-policy').checked) { policyTooltip.style.display = 'none'; return; }
+  const rect = canvas.getBoundingClientRect();
+  const scaleX = canvas.width / rect.width;
+  const scaleY = canvas.height / rect.height;
+  const col = Math.round(((e.clientX - rect.left) * scaleX - PADDING) / cellSize);
+  const row = Math.round(((e.clientY - rect.top) * scaleY - PADDING) / cellSize);
+  if (row < 0 || row >= SIZE || col < 0 || col >= SIZE) { policyTooltip.style.display = 'none'; return; }
+  const entry = game.lastProbs.find(([r, c]) => r === row && c === col);
+  if (!entry || game.board[row][col] !== 0) { policyTooltip.style.display = 'none'; return; }
+  const pct = (entry[2] * 100).toFixed(2);
+  policyTooltip.textContent = `${pct}%`;
+  policyTooltip.style.display = 'block';
+  policyTooltip.style.left = (e.clientX + 14) + 'px';
+  policyTooltip.style.top  = (e.clientY - 10) + 'px';
+});
+
+canvas.addEventListener('mouseleave', () => { policyTooltip.style.display = 'none'; });
 
 canvas.addEventListener('click', async (e) => {
   if (!game || game.winner !== null || thinking || game.paused) return;
