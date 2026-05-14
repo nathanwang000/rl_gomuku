@@ -69,18 +69,18 @@ class SmartPolicy(Policy):
     def action_probs(self, state: GameState) -> dict:
         """Action probability distribution reflecting priority rules.
 
-        - Returns {forced_move: 1.0} when an immediate win or block exists.
-        - Otherwise returns normalized heuristic scores over all candidates.
-        This means select_move and select_move_with_probs are fully covered
-        by the base class — no overrides needed.
+        - Returns {forced_move: 1.0} when an immediate win or block exists
+          (checked before the expensive scoring loop).
+        - Otherwise returns uniform distribution over tied best-score moves.
         """
         me = state.current_player
         opp = 3 - me
         board = state.board
+        candidates = self._get_candidate_moves(board)
+        if not candidates:
+            return {(BOARD_SIZE // 2, BOARD_SIZE // 2): 1.0}
 
-        scores = self._compute_scores(state)
-        candidates = list(scores.keys())
-
+        # Priority checks first — avoids scoring all moves when unnecessary
         for r, c in candidates:
             # priority 1: can I win immediately?
             if self._would_win(board, r, c, me):
@@ -90,28 +90,13 @@ class SmartPolicy(Policy):
             if self._would_win(board, r, c, opp):
                 return {(r, c): 1.0}
 
-        # priority 3+: uniform choose among highest-scoring moves (could be multiple with same score)
+        # find best score among all candidates
+        scores = {(r, c): self._score_move(board, r, c, me, opp) for r, c in candidates}
         vals = np.array(list(scores.values()), dtype=float)
         best = vals.max()
         uniform = (vals == best).astype(float)
         uniform /= uniform.sum()
         return {m: float(p) for m, p in zip(scores.keys(), uniform)}
-
-    def _compute_scores(self, state: GameState) -> dict:
-        """Raw heuristic scores for all candidate moves."""
-        me = state.current_player
-        opp = 3 - me
-        board = state.board
-
-        # Only consider moves near existing stones for efficiency
-        candidates = self._get_candidate_moves(board)
-        if not candidates:
-            # empty board — no heuristics, just pick center
-            return {(BOARD_SIZE // 2, BOARD_SIZE // 2): 1}
-        return {
-            (r, c): self._score_move(board, r, c, me, opp)
-            for r, c in candidates
-        }
 
     def _get_candidate_moves(self, board: np.ndarray) -> List[Tuple[int, int]]:
         """Return empty cells within distance 2 of any existing stone."""

@@ -71,11 +71,10 @@ class NeuralPolicy(Policy):
     @torch.no_grad()
     def _select_with_policy(
         self, state: GameState
-    ) -> Tuple[int, torch.Tensor, float]:
-        """Returns (move_index, policy_distribution_tensor, value_pred) for training.
+    ) -> Tuple[int, torch.Tensor, float, torch.Tensor]:
+        """Returns (move_index, policy_distribution_tensor, value_pred, state_tensor) for training.
 
-        Single forward pass — builds the dict returned by action_probs and the
-        flat tensor needed for training targets in one shot.
+        Returns the encoded state tensor so callers don't need to re-encode.
         """
         x = self.net.encode_state(state).to(self.device)
         logits, value = self.net(x)
@@ -97,7 +96,7 @@ class NeuralPolicy(Policy):
             dist = torch.softmax(logits / self.temperature, dim=0)
             move_index = int(torch.multinomial(dist, 1).item())
 
-        return move_index, dist.cpu(), value_pred
+        return move_index, dist.cpu(), value_pred, x.squeeze(0).cpu()
 
 
 def run_episode(
@@ -128,8 +127,7 @@ def run_episode(
         policy = policies[player]
 
         if record and isinstance(policy, NeuralPolicy):
-            move_index, dist, value_pred = policy._select_with_policy(state)
-            state_tensor = policy.net.encode_state(state).squeeze(0)  # (2,H,W)
+            move_index, dist, value_pred, state_tensor = policy._select_with_policy(state)
             H = state.board.shape[0]
             row, col = divmod(move_index, H)
             # Query teacher on the same state for the BC supervision target
@@ -138,7 +136,7 @@ def run_episode(
             episode.record(
                 state=state_tensor,
                 move_index=move_index,
-                policy_target=dist.cpu(),
+                policy_target=dist,
                 value_pred=value_pred,
                 player=player,
                 teacher_move_index=teacher_move_index,
