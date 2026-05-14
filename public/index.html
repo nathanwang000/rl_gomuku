@@ -57,12 +57,13 @@ canvas { cursor: crosshair; border-radius: 4px; box-shadow: 0 4px 20px rgba(0,0,
     <div class="neural-opts" id="neural-opts-black" style="display:none">
       <label>Temp
         <input type="range" id="temp-black" min="0" max="1" step="0.05" value="0.5"
-               oninput="document.getElementById('temp-black-val').textContent=parseFloat(this.value).toFixed(2)">
+               oninput="document.getElementById('temp-black-val').textContent=parseFloat(this.value).toFixed(2)"
+               onchange="onPolicyChange('black')">
         <span id="temp-black-val">0.50</span>
       </label>
       <label><input type="checkbox" id="mcts-black" onchange="onMctsChange('black')"> MCTS</label>
       <div id="mcts-sims-row-black" style="display:none">
-        <label>Sims <input type="number" id="sims-black" value="100" min="10" max="800" step="10"></label>
+        <label>Sims <input type="number" id="sims-black" value="100" min="10" max="800" step="10" onchange="onPolicyChange('black')"></label>
       </div>
     </div>
   </div>
@@ -77,12 +78,13 @@ canvas { cursor: crosshair; border-radius: 4px; box-shadow: 0 4px 20px rgba(0,0,
     <div class="neural-opts" id="neural-opts-white" style="display:none">
       <label>Temp
         <input type="range" id="temp-white" min="0" max="1" step="0.05" value="0.5"
-               oninput="document.getElementById('temp-white-val').textContent=parseFloat(this.value).toFixed(2)">
+               oninput="document.getElementById('temp-white-val').textContent=parseFloat(this.value).toFixed(2)"
+               onchange="onPolicyChange('white')">
         <span id="temp-white-val">0.50</span>
       </label>
       <label><input type="checkbox" id="mcts-white" onchange="onMctsChange('white')"> MCTS</label>
       <div id="mcts-sims-row-white" style="display:none">
-        <label>Sims <input type="number" id="sims-white" value="100" min="10" max="800" step="10"></label>
+        <label>Sims <input type="number" id="sims-white" value="100" min="10" max="800" step="10" onchange="onPolicyChange('white')"></label>
       </div>
     </div>
   </div>
@@ -429,6 +431,7 @@ async function refreshPolicyProbs() {
 function onMctsChange(side) {
   const checked = document.getElementById(`mcts-${side}`).checked;
   document.getElementById(`mcts-sims-row-${side}`).style.display = checked ? '' : 'none';
+  onPolicyChange(side);
 }
 
 // --- Swap players ---
