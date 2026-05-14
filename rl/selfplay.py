@@ -74,28 +74,30 @@ class NeuralPolicy(Policy):
     ) -> Tuple[int, torch.Tensor, float]:
         """Returns (move_index, policy_distribution_tensor, value_pred) for training.
 
-        Reuses action_probs for the distribution and does one extra forward pass
-        only for the value head — avoids duplicating masking/temperature logic.
+        Single forward pass — builds the dict returned by action_probs and the
+        flat tensor needed for training targets in one shot.
         """
-        # Get distribution via action_probs (already handles masking + temperature)
-        probs_dict = self.action_probs(state)
-
-        # Convert dict back to a flat tensor over the full board for training targets
-        H, W = state.board.shape
-        dist = torch.zeros(H * W)
-        for (r, c), p in probs_dict.items():
-            dist[r * W + c] = p
-
-        # Sample the move from the distribution
-        move_index = int(torch.multinomial(dist, 1).item()) if self.temperature != 0 else int(dist.argmax())
-
-        # Single forward pass just for the value head
         x = self.net.encode_state(state).to(self.device)
-        with torch.no_grad():
-            _, value = self.net(x)
+        logits, value = self.net(x)
+        logits = logits.squeeze(0)
         value_pred = value.item()
 
-        return move_index, dist, value_pred
+        H, W = state.board.shape
+        valid = state.valid_moves()
+        mask = torch.full((H * W,), float("-inf"), device=logits.device)
+        for r, c in valid:
+            mask[r * W + c] = 0.0
+        logits = logits + mask
+
+        if self.temperature == 0:
+            dist = torch.zeros_like(logits)
+            dist[int(logits.argmax())] = 1.0
+            move_index = int(dist.argmax())
+        else:
+            dist = torch.softmax(logits / self.temperature, dim=0)
+            move_index = int(torch.multinomial(dist, 1).item())
+
+        return move_index, dist.cpu(), value_pred
 
 
 def run_episode(
