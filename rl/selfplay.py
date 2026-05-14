@@ -58,8 +58,10 @@ class NeuralPolicy(Policy):
     ) -> Tuple[int, torch.Tensor, float, torch.Tensor]:
         """Returns (move_index, policy_distribution_tensor, value_pred, state_tensor) for training.
 
-        Returns the encoded state tensor so callers don't need to re-encode.
+        Sets eval mode so BN uses running stats (not noisy single-sample batch stats).
+        train_step() in Trainer resets net.train() before the gradient update.
         """
+        self.net.eval()
         x = self.net.encode_state(state).to(self.device)
         logits, value = self.net(x)
         logits = logits.squeeze(0)
