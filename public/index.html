@@ -323,7 +323,7 @@ function undoMove() {
   game.paused = true;
   thinking = false;
   aiLoopRunning = false;
-  render();
+  afterRestore();
 }
 
 function redoMove() {
@@ -333,7 +333,16 @@ function redoMove() {
   game.paused = true;
   thinking = false;
   aiLoopRunning = false;
+  afterRestore();
+}
+
+// Called after any snapshot restore — renders immediately, then fetches
+// policy probs in the background if the current state has none.
+function afterRestore() {
   render();
+  if (game.winner === null && !isHuman(game.currentPlayer) && !game.lastProbs) {
+    refreshPolicyProbs();
+  }
 }
 
 function resumeGame() {
@@ -372,10 +381,49 @@ function onPolicyChange(side) {
     document.getElementById(`mcts-${side}`).checked = false;
     document.getElementById(`mcts-sims-row-${side}`).style.display = 'none';
   }
-  // Trigger mid-game AI if needed
+
   const player = side === 'black' ? 1 : 2;
   if (!game || game.winner !== null) return;
+
+  if (game.paused) {
+    // Invalidate cached probs in history/future for positions where this player moves
+    const invalidate = (snap) => { if (snap.currentPlayer === player) snap.lastProbs = null; };
+    game.history.forEach(invalidate);
+    game.future.forEach(invalidate);
+    // Invalidate and refresh current position if it's this player's turn
+    if (game.currentPlayer === player) {
+      game.lastProbs = null;
+      afterRestore();  // re-render immediately, fetch probs if AI
+    }
+    return;
+  }
+
+  // Not paused: start AI loop if it's now this player's turn
   if (game.currentPlayer === player && !isHuman(player)) aiTurnLoop();
+}
+
+async function refreshPolicyProbs() {
+  if (!game || game.winner !== null) return;
+  const config = getPlayerConfig(game.currentPlayer);
+  if (config.policy === 'human') { game.lastProbs = null; render(); return; }
+  try {
+    const res = await fetch(`${API_BASE}/api/policy`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        board: game.board,
+        current_player: game.currentPlayer,
+        ...config,
+      }),
+    });
+    if (res.ok) {
+      const { probs } = await res.json();
+      game.lastProbs = probs || null;
+    }
+  } catch (e) {
+    game.lastProbs = null;
+  }
+  render();
 }
 
 function onMctsChange(side) {
