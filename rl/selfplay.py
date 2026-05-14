@@ -41,24 +41,8 @@ class NeuralPolicy(Policy):
     @torch.no_grad()
     def action_probs(self, state: GameState) -> dict:
         """Return softmaxed policy distribution as {(row, col): prob}."""
-        x = self.net.encode_state(state).to(self.device)
-        logits, _ = self.net(x)
-        logits = logits.squeeze(0)
-
-        H, W = state.board.shape
-        valid = state.valid_moves()
-        mask = torch.full((H * W,), float("-inf"), device=logits.device)
-        for r, c in valid:
-            mask[r * W + c] = 0.0
-        logits = logits + mask
-
-        if self.temperature == 0:
-            dist = torch.zeros_like(logits)
-            dist[int(logits.argmax())] = 1.0
-        else:
-            dist = torch.softmax(logits / self.temperature, dim=0)
-
-        return {(r, c): dist[r * W + c].item() for r, c in valid}
+        _, dist, _, _ = self._select_with_policy(state)
+        return {(r, c): dist[r * state.board.shape[0] + c].item() for r, c in state.valid_moves()}
 
     # select_move is inherited from Policy base class (samples from action_probs)
     # select_move_with_probs is also inherited
