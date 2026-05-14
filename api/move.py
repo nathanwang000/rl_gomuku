@@ -69,12 +69,14 @@ def handler(event, context=None):
             "body": json.dumps({"error": f"Unknown policy: {policy_name}"}),
         }
 
-    row, col = policy.select_move(state)
+    move, probs = policy.select_move_with_probs(state)
+    row, col = move
+    probs_list = [[int(r), int(c), round(p, 5)] for (r, c), p in probs.items() if p > 1e-4]
 
     return {
         "statusCode": 200,
         "headers": {"Content-Type": "application/json", "Access-Control-Allow-Origin": "*"},
-        "body": json.dumps({"row": int(row), "col": int(col)}),
+        "body": json.dumps({"row": int(row), "col": int(col), "probs": probs_list}),
     }
 
 

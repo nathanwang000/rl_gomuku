@@ -12,7 +12,6 @@ state.winner / state.current_player.
 from typing import List, Optional, Tuple
 
 import torch
-import torch.nn.functional as F
 from game import GameState
 from policy import Policy
 from policy import SmartPolicy as _SmartPolicy
@@ -39,39 +38,62 @@ class NeuralPolicy(Policy):
         self.temperature = temperature
         self.device = device
 
-    def select_move(self, state: GameState) -> Tuple[int, int]:
-        move_index, _, __ = self._select_with_policy(state)
-        H = state.board.shape[0]
-        return divmod(move_index, H)
+    @torch.no_grad()
+    def action_probs(self, state: GameState) -> dict:
+        """Return softmaxed policy distribution as {(row, col): prob}."""
+        x = self.net.encode_state(state).to(self.device)
+        logits, _ = self.net(x)
+        logits = logits.squeeze(0)
+
+        H, W = state.board.shape
+        valid = state.valid_moves()
+        mask = torch.full((H * W,), float("-inf"), device=logits.device)
+        for r, c in valid:
+            mask[r * W + c] = 0.0
+        logits = logits + mask
+
+        if self.temperature == 0:
+            dist = torch.zeros_like(logits)
+            dist[int(logits.argmax())] = 1.0
+        else:
+            dist = torch.softmax(logits / self.temperature, dim=0)
+
+        return {(r, c): dist[r * W + c].item() for r, c in valid}
+
+    # select_move is inherited from Policy base class (samples from action_probs)
+    # select_move_with_probs is also inherited
 
     # ------------------------------------------------------------------
     # Extended interface used by run_episode to also get the policy dist
+    # (kept for training use — returns tensor dist + value prediction)
     # ------------------------------------------------------------------
 
     @torch.no_grad()
     def _select_with_policy(
         self, state: GameState
     ) -> Tuple[int, torch.Tensor, float]:
-        """Returns (move_index, policy_distribution, value_pred) for recording."""
-        x = self.net.encode_state(state).to(self.device)  # (1, 2, H, W)
-        logits, value = self.net(x)                        # (1, H*W), (1,)
-        logits = logits.squeeze(0)                         # (H*W,)
-        value_pred = value.item()
+        """Returns (move_index, policy_distribution_tensor, value_pred) for training.
 
-        # Mask illegal moves
+        Reuses action_probs for the distribution and does one extra forward pass
+        only for the value head — avoids duplicating masking/temperature logic.
+        """
+        # Get distribution via action_probs (already handles masking + temperature)
+        probs_dict = self.action_probs(state)
+
+        # Convert dict back to a flat tensor over the full board for training targets
         H, W = state.board.shape
-        valid = state.valid_moves()
-        mask = torch.full((H * W, ), float("-inf"), device=logits.device)
-        for r, c in valid:
-            mask[r * W + c] = 0.0
-        logits = logits + mask
+        dist = torch.zeros(H * W)
+        for (r, c), p in probs_dict.items():
+            dist[r * W + c] = p
 
-        if self.temperature == 0:
-            move_index = int(logits.argmax())
-            dist = F.softmax(logits, dim=0)
-        else:
-            dist = F.softmax(logits / self.temperature, dim=0)
-            move_index = int(torch.multinomial(dist, 1).item())
+        # Sample the move from the distribution
+        move_index = int(torch.multinomial(dist, 1).item()) if self.temperature != 0 else int(dist.argmax())
+
+        # Single forward pass just for the value head
+        x = self.net.encode_state(state).to(self.device)
+        with torch.no_grad():
+            _, value = self.net(x)
+        value_pred = value.item()
 
         return move_index, dist, value_pred
 

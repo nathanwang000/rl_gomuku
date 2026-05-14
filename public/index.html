@@ -34,8 +34,11 @@ select { background: #16213e; color: #eee; border: 1px solid #444; width: 100%; 
 #resume-btn:hover { background: #2ecc71; }
 #music-btn { background: #16213e; border: 1px solid #444; font-size: 18px; padding: 6px 10px; }
 #music-btn:hover { background: #1a1a4e; }
-#status { margin-bottom: 10px; font-size: 16px; min-height: 24px; transition: color 0.2s; }
+#status { margin-bottom: 6px; font-size: 16px; min-height: 24px; transition: color 0.2s; }
 #status.paused { color: #f39c12; }
+#policy-bar { margin-bottom: 10px; display: flex; align-items: center; gap: 8px; font-size: 13px; color: #aaa; }
+#policy-bar label { display: flex; align-items: center; gap: 6px; cursor: pointer; user-select: none; }
+#policy-bar input[type=checkbox] { accent-color: #e94560; width: 14px; height: 14px; cursor: pointer; }
 canvas { cursor: crosshair; border-radius: 4px; box-shadow: 0 4px 20px rgba(0,0,0,0.5); }
 .thinking { animation: pulse 1s infinite; }
 @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
@@ -94,6 +97,12 @@ canvas { cursor: crosshair; border-radius: 4px; box-shadow: 0 4px 20px rgba(0,0,
   </div>
 </div>
 <div id="status">Click "New Game" to start</div>
+<div id="policy-bar">
+  <label title="Overlay the AI's action probability distribution on valid moves">
+    <input type="checkbox" id="show-policy" onchange="render()">
+    Show policy
+  </label>
+</div>
 <canvas id="board" width="620" height="620"></canvas>
 
 <script>
@@ -295,6 +304,7 @@ function snapshotGame() {
     currentPlayer: game.currentPlayer,
     winner: game.winner,
     lastMove: game.lastMove ? [...game.lastMove] : null,
+    lastProbs: game.lastProbs ? game.lastProbs.map(p => [...p]) : null,
   };
 }
 
@@ -303,6 +313,7 @@ function restoreSnapshot(snap) {
   game.currentPlayer = snap.currentPlayer;
   game.winner = snap.winner;
   game.lastMove = snap.lastMove ? [...snap.lastMove] : null;
+  game.lastProbs = snap.lastProbs ? snap.lastProbs.map(p => [...p]) : null;
 }
 
 function undoMove() {
@@ -486,13 +497,14 @@ async function aiTurnLoop() {
     render();
 
     try {
-      const { row, col } = await requestAIMove(config);
+      const { row, col, probs } = await requestAIMove(config);
       // Re-check after await — user might have switched mid-request
       if (isHuman(game.currentPlayer)) {
         thinking = false;
         render();
         break;
       }
+      game.lastProbs = probs || null;  // store before makeMove (snapshot captures it)
       if (!makeMove(row, col)) {
         console.error('AI returned invalid move', row, col);
         break;
@@ -606,7 +618,44 @@ function updateStatus() {
   }
 }
 
-function render() { drawBoard(); drawStones(); updateStatus(); }
+function drawPolicyOverlay() {
+  if (!game || !game.lastProbs || !game.lastProbs.length) return;
+  if (!document.getElementById('show-policy').checked) return;
+
+  const probs = game.lastProbs;
+  const maxP = Math.max(...probs.map(([,,p]) => p));
+  if (maxP <= 0) return;
+
+  for (const [r, c, p] of probs) {
+    // Skip occupied cells (stones already drawn)
+    if (game.board[r][c] !== 0) continue;
+    const x = PADDING + c * cellSize;
+    const y = PADDING + r * cellSize;
+    const rel = p / maxP;  // 0..1 relative to top move
+
+    // Color: interpolate blue (low) → orange (high)
+    const R = Math.round(30 + 225 * rel);
+    const G = Math.round(100 + (rel < 0.5 ? rel * 60 : (1 - rel) * 60));
+    const B = Math.round(220 - 200 * rel);
+    const alpha = 0.15 + 0.65 * rel;
+
+    ctx.beginPath();
+    ctx.arc(x, y, cellSize * (0.18 + 0.22 * rel), 0, Math.PI * 2);
+    ctx.fillStyle = `rgba(${R},${G},${B},${alpha})`;
+    ctx.fill();
+
+    // Ring on top move
+    if (rel > 0.98) {
+      ctx.beginPath();
+      ctx.arc(x, y, cellSize * 0.38, 0, Math.PI * 2);
+      ctx.strokeStyle = `rgba(${R},${G},${B},0.7)`;
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+    }
+  }
+}
+
+function render() { drawBoard(); drawPolicyOverlay(); drawStones(); updateStatus(); }
 
 // --- User Interaction ---
 
@@ -616,6 +665,7 @@ function newGame() {
     currentPlayer: 1,
     winner: null,
     lastMove: null,
+    lastProbs: null,
     history: [],
     future: [],
     paused: false,
@@ -640,6 +690,7 @@ canvas.addEventListener('click', async (e) => {
   if (row < 0 || row >= SIZE || col < 0 || col >= SIZE) return;
 
   if (!makeMove(row, col)) return;
+  game.lastProbs = null;  // human moves have no policy probs
   render();
 
   // After human move, let AI respond if next player is AI

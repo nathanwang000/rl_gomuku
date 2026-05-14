@@ -120,8 +120,10 @@ class GomokuHandler(SimpleHTTPRequestHandler):
             self._respond(400, {"error": f"Unknown or missing policy: {policy_name} ({e})"})
             return
 
-        row, col = policy.select_move(state)
-        self._respond(200, {"row": int(row), "col": int(col)})
+        move, probs = policy.select_move_with_probs(state)
+        row, col = move
+        probs_list = [[int(r), int(c), round(p, 5)] for (r, c), p in probs.items() if p > 1e-4]
+        self._respond(200, {"row": int(row), "col": int(col), "probs": probs_list})
 
     def _respond(self, status: int, data: dict):
         body = json.dumps(data).encode()

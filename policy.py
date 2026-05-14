@@ -11,23 +11,44 @@ class Policy(ABC):
     """Base class for all policies (human or AI)."""
 
     @abstractmethod
-    def select_move(self, state: GameState) -> Tuple[int, int]:
-        """Given a game state, return (row, col) to play."""
+    def action_probs(self, state: GameState) -> dict:
+        """Return a probability distribution over valid moves as {(row, col): prob}.
+
+        Probabilities must be non-negative and sum to 1.
+        Temperature and any other policy-specific shaping should be applied here.
+        """
         ...
+
+    def select_move(self, state: GameState) -> Tuple[int, int]:
+        """Sample a move from action_probs. Override only for special cases."""
+        move, _ = self.select_move_with_probs(state)
+        return move
+
+    def select_move_with_probs(self, state: GameState) -> Tuple[Tuple[int, int], dict]:
+        """Return (move, action_probs dict) in a single call, avoiding double computation."""
+        probs = self.action_probs(state)
+        moves = list(probs.keys())
+        weights = list(probs.values())
+        move = random.choices(moves, weights=weights)[0]
+        return move, probs
 
 
 class RandomPolicy(Policy):
     """Picks a random valid move — dummy baseline."""
 
-    def select_move(self, state: GameState) -> Tuple[int, int]:
+    def action_probs(self, state: GameState) -> dict:
         moves = state.valid_moves()
-        return random.choice(moves)
+        p = 1.0 / len(moves)
+        return {m: p for m in moves}
 
 
 class HumanPolicy(Policy):
     """Placeholder — moves come from the frontend, not computed here."""
 
-    def select_move(self, state: GameState) -> Tuple[int, int]:
+    def action_probs(self, state: GameState) -> dict:
+        raise NotImplementedError("Human moves come from the UI")
+
+    def select_move_with_probs(self, state: GameState) -> Tuple[Tuple[int, int], dict]:
         raise NotImplementedError("Human moves come from the UI")
 
 
@@ -45,7 +66,39 @@ class SmartPolicy(Policy):
 
     DIRECTIONS = [(0, 1), (1, 0), (1, 1), (1, -1)]
 
-    def select_move(self, state: GameState) -> Tuple[int, int]:
+    def action_probs(self, state: GameState) -> dict:
+        """Action probability distribution reflecting priority rules.
+
+        - Returns {forced_move: 1.0} when an immediate win or block exists.
+        - Otherwise returns normalized heuristic scores over all candidates.
+        This means select_move and select_move_with_probs are fully covered
+        by the base class — no overrides needed.
+        """
+        me = state.current_player
+        opp = 3 - me
+        board = state.board
+
+        scores = self._compute_scores(state)
+        candidates = list(scores.keys())
+
+        for r, c in candidates:
+            # priority 1: can I win immediately?
+            if self._would_win(board, r, c, me):
+                return {(r, c): 1.0}
+        for r, c in candidates:
+            # priority 2: do I need to block opponent's win?
+            if self._would_win(board, r, c, opp):
+                return {(r, c): 1.0}
+
+        # priority 3+: uniform choose among highest-scoring moves (could be multiple with same score)
+        vals = np.array(list(scores.values()), dtype=float)
+        best = vals.max()
+        uniform = (vals == best).astype(float)
+        uniform /= uniform.sum()
+        return {m: float(p) for m, p in zip(scores.keys(), uniform)}
+
+    def _compute_scores(self, state: GameState) -> dict:
+        """Raw heuristic scores for all candidate moves."""
         me = state.current_player
         opp = 3 - me
         board = state.board
@@ -53,31 +106,12 @@ class SmartPolicy(Policy):
         # Only consider moves near existing stones for efficiency
         candidates = self._get_candidate_moves(board)
         if not candidates:
-            # Empty board — play center
-            return (BOARD_SIZE // 2, BOARD_SIZE // 2)
-
-        # Priority 1: Can I win immediately?
-        for r, c in candidates:
-            if self._would_win(board, r, c, me):
-                return (r, c)
-
-        # Priority 2: Must I block opponent's immediate win?
-        for r, c in candidates:
-            if self._would_win(board, r, c, opp):
-                return (r, c)
-
-        # Priority 3+: Score every candidate move with heuristic
-        best_score = -1
-        best_moves = []
-        for r, c in candidates:
-            score = self._score_move(board, r, c, me, opp)
-            if score > best_score:
-                best_score = score
-                best_moves = [(r, c)]
-            elif score == best_score:
-                best_moves.append((r, c))
-
-        return random.choice(best_moves)
+            # empty board — no heuristics, just pick center
+            return {(BOARD_SIZE // 2, BOARD_SIZE // 2): 1}
+        return {
+            (r, c): self._score_move(board, r, c, me, opp)
+            for r, c in candidates
+        }
 
     def _get_candidate_moves(self, board: np.ndarray) -> List[Tuple[int, int]]:
         """Return empty cells within distance 2 of any existing stone."""
@@ -110,7 +144,7 @@ class SmartPolicy(Policy):
 
     def _count_line(self, board: np.ndarray, row: int, col: int, dr: int, dc: int, player: int):
         """Count consecutive stones and open ends for `player` through (row, col) in direction (dr, dc).
-        
+
         Assumes (row, col) is empty and would be filled by player.
         Returns (length, open_ends) where open_ends is 0, 1, or 2.
         """

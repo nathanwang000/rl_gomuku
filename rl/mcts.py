@@ -146,19 +146,23 @@ class MCTSPolicy(Policy):
         self.temperature = temperature
         self.device = device
 
-    def select_move(self, state: GameState) -> Tuple[int, int]:
+    def action_probs(self, state: GameState) -> dict:
+        """Return visit-count distribution as {(row, col): prob} (temperature applied).
+
+        This is the single source of truth for both move selection and the policy
+        overlay. select_move and select_move_with_probs are inherited from Policy.
+        """
         visit_counts, moves = self._search(state)
+        counts = torch.tensor(visit_counts, dtype=torch.float32)
 
         if self.temperature == 0:
-            best = max(range(len(moves)), key=lambda i: visit_counts[i])
-            return moves[best]
+            probs = torch.zeros_like(counts)
+            probs[int(counts.argmax())] = 1.0
+        else:
+            probs = counts ** (1.0 / self.temperature)
+            probs = probs / probs.sum()
 
-        # Sample proportional to visit_count^(1/T)
-        counts = torch.tensor(visit_counts, dtype=torch.float32)
-        probs = (counts**(1.0 / self.temperature))
-        probs = probs / probs.sum()
-        idx = int(torch.multinomial(probs, 1).item())
-        return moves[idx]
+        return {m: probs[i].item() for i, m in enumerate(moves)}
 
     def visit_distribution(self, state: GameState) -> Tuple[list, list]:
         """Return (moves, visit_counts) for use as a policy target (e.g. for BC)."""
