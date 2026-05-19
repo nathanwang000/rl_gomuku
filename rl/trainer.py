@@ -10,7 +10,7 @@ Total loss = policy_coeff * policy_loss + value_coeff * value_loss + bc_coeff * 
                bc_coeff>0   → nudges policy toward teacher policy's moves
 """
 
-from typing import Tuple
+from typing import Dict, Tuple
 
 import torch
 import torch.nn.functional as F
@@ -29,12 +29,14 @@ class Trainer:
         policy_coeff: float = 1.0,
         value_coeff: float = 1.0,
         bc_coeff: float = 0.0,
+        use_value_baseline: bool = False,
     ):
         self.net = net.to(device)
         self.device = device
         self.policy_coeff = policy_coeff
         self.value_coeff  = value_coeff
         self.bc_coeff     = bc_coeff
+        self.use_value_baseline = use_value_baseline
         self.optimizer = torch.optim.Adam(net.parameters(), lr=lr)
 
     def train_step(
@@ -43,8 +45,12 @@ class Trainer:
             move_indices: torch.Tensor,       # (B,) — flat index of chosen move
             value_targets: torch.Tensor,      # (B,) — TD(λ) return
             teacher_move_indices: torch.Tensor,# (B,) — teacher policy's move (BC target)
-    ) -> Tuple[float, float, float]:
-        """One gradient step. Returns (policy_loss, value_loss, bc_loss)."""
+    ) -> Tuple[float, float, float, Dict[str, float]]:
+        """One gradient step. Returns (policy_loss, value_loss, bc_loss, extras).
+
+        extras keys:
+          grad_norm  — L2 norm of all parameter gradients (useful for debugging).
+        """
         states               = states.to(self.device)
         move_indices         = move_indices.to(self.device)
         value_targets        = value_targets.to(self.device)
@@ -55,7 +61,10 @@ class Trainer:
         log_probs = F.log_softmax(policy_logits, dim=-1)  # (B, H*W)
 
         # REINFORCE: weight log-prob of chosen move by TD(λ) advantage
-        advantage        = value_targets - value.detach()                             # (B,)
+        if self.use_value_baseline:
+            advantage = value_targets - value.detach()  # actor-critic: reduce variance
+        else:
+            advantage = value_targets                   # pure REINFORCE: no baseline
         chosen_log_probs = log_probs.gather(1, move_indices.unsqueeze(1)).squeeze(1)  # (B,)
         policy_loss      = -(chosen_log_probs * advantage).mean()
 
@@ -69,9 +78,11 @@ class Trainer:
         loss = self.policy_coeff * policy_loss + self.value_coeff * value_loss + self.bc_coeff * bc_loss
         self.optimizer.zero_grad()
         loss.backward()
+        grad_norm = torch.nn.utils.clip_grad_norm_(self.net.parameters(), max_norm=float("inf")).item()
         self.optimizer.step()
 
-        return policy_loss.item(), value_loss.item(), bc_loss.item()
+        extras = {"grad_norm": grad_norm}
+        return policy_loss.item(), value_loss.item(), bc_loss.item(), extras
 
     def save(self, path: str) -> None:
         torch.save(self.net.state_dict(), path)
